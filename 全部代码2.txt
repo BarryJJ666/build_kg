@@ -1,0 +1,2345 @@
+config.py:
+# -*- coding: utf-8 -*-
+"""
+配置文件
+"""
+# Neo4j数据库配置
+NEO4J_CONFIG = {
+    'uri': 'bolt://8.130.70.72:21099',
+    'user': 'neo4j',
+    'password': 'zyz_password'
+}
+
+# LLM配置(OpenAI兼容API)
+LLM_CONFIG = {
+    'api_base': 'https://ai.gitee.com/v1',
+    'api_key': 'BRGYKADH3CKIAGSETETJBD95C1TAKPICNJMY22II',
+    'model': 'Qwen2.5-72B-Instruct',
+    'temperature': 0.1,
+    'max_tokens': 2000,
+    'timeout': 30
+}
+
+# 数据文件配置
+DATA_CONFIG = {
+    'data_dir': './data/',
+    # 文件名到技术领域代码的映射(初步分类，LLM会进一步细化)
+    'file_mapping': {
+        "2.6.1制氢技术-1.xlsx": "H1.1",
+        "2.6.1制氢技术-2.xlsx": "H1.1",
+        "2.6.2.1 物理储氢.xlsx": "H2.1",
+        "2.6.2.2合金储氢.xlsx": "H2.3",
+        "2.6.2.3无机储氢-1.xlsx": "H2.3",
+        "2.6.2.3无机储氢-2.xlsx": "H2.3",
+        "2.6.2.4有机储氢.xlsx": "H2.4",
+        "2.6.3氢燃料电池.xlsx": "H3.1",
+        "2.6.4氢制冷.xlsx": "H3.4"
+    }
+}
+
+# 日志配置
+LOG_CONFIG = {
+    'level': 'INFO',
+    'format': '%(asctime)s - %(levelname)s - %(message)s',
+    'file': 'import_log.txt'
+}
+
+# 绿色技术分类定义
+GREEN_TECH_CATEGORIES = {
+    '零碳使能型': {
+        'code': 'GT1',
+        'categoryType': '零碳使能型',
+        'definition': '直接支撑绿氢经济的核心技术，必须或显著提升可再生能源制氢的可行性，降低绿氢成本、能耗或间歇性障碍，实现全流程近零碳排放。',
+        'typicalExamples': ['PEM电解槽优化', '风光氢离网耦合控制系统', '低能耗有机液体储氢（LOHC）脱氢技术', '绿氢燃料电池重卡']
+    },
+    '低碳过渡型': {
+        'code': 'GT2',
+        'categoryType': '低碳过渡型',
+        'definition': '支持蓝氢或显著减碳的过渡性技术，依赖碳捕集与封存（CCS/CCUS）实现大幅减排（建议捕集率≥85%），或用于替代高碳终端应用（如煤制氨转为氢制氨）。',
+        'typicalExamples': ['蒸汽甲烷重整（SMR）+高效CCS系统', '蓝氢专用输氢管道', '氢基直接还原铁（H₂-DRI）炼钢工艺']
+    },
+    '绿氢兼容型': {
+        'code': 'GT3',
+        'categoryType': '绿氢兼容型',
+        'definition': '技术本身不产生碳排放，可用于绿氢也可用于灰氢，无化石能源依赖，不锁定高碳路径，但也不专属促进零碳转型。',
+        'typicalExamples': ['高压IV型储氢瓶', '标准加氢站设备', '通用质子交换膜（PEM）', '氢气压缩机']
+    },
+    '碳锁定型': {
+        'code': 'GT4',
+        'categoryType': '碳锁定型',
+        'definition': '强化高碳制氢路径，仅优化灰氢或棕氢工艺，延长化石能源制氢寿命，且未集成CCS或可再生电力接口，阻碍系统脱碳。',
+        'typicalExamples': ['无CCS的SMR催化剂效率提升', '炼油厂专用灰氢提纯装置', '基于天然气管网的高比例灰氢输配系统']
+    },
+    '中性模糊型': {
+        'code': 'GT5',
+        'categoryType': '中性模糊型',
+        'definition': '无法明确判断其绿色贡献的技术，通常为通用基础部件、安全装置或未限定应用场景/能源来源的模块。',
+        'typicalExamples': ['氢气泄漏传感器', '密封材料改进', '未限定电源类型的电解电源管理模块', '通用阀门或连接件']
+    }
+}
+
+# LLM增强配置
+LLM_ENHANCE_CONFIG = {
+    'batch_size': 5,  # 每批处理的专利数量（传给LLM）
+    'output_dir': './llm_output_previous/',
+    'enable_tech_classification': True,
+    'enable_green_classification': True,
+    'enable_location_extraction': True,
+    'max_workers': 4  # 并发线程数
+}
+
+
+
+
+import_patents.py:
+# -*- coding: utf-8 -*-
+"""
+氢能专利知识图谱 - 数据导入模块（修改版）
+主要功能:
+1. 创建所有确定的节点: Patent, Entity, Date, Province, City, District, TechDomain, GreenTechCategory
+2. 创建所有确定的边关系（不需要LLM的关系）
+3. 批量处理提升性能
+4. 地理位置解析(基于规则,LLM会进一步增强)
+"""
+
+import os
+import re
+import pandas as pd
+from datetime import datetime
+from neo4j import GraphDatabase
+import logging
+import argparse
+from tech_domains import get_all_tech_domains
+from config import NEO4J_CONFIG, DATA_CONFIG, LOG_CONFIG, GREEN_TECH_CATEGORIES
+
+# 配置日志
+logging.basicConfig(
+    level=getattr(logging, LOG_CONFIG['level']),
+    format=LOG_CONFIG['format'],
+    handlers=[
+        logging.FileHandler(LOG_CONFIG['file'], encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+
+class PatentKnowledgeGraphBuilder:
+    """专利知识图谱构建器"""
+
+    def __init__(self, uri, user, password, batch_size=5000):
+        """初始化Neo4j连接"""
+        self.driver = GraphDatabase.driver(
+            uri,
+            auth=(user, password),
+            max_connection_pool_size=100,
+            connection_timeout=60
+        )
+        self.batch_size = batch_size
+
+        # 中国省份、直辖市、自治区列表
+        self.provinces = {
+            '北京': '北京市', '天津': '天津市', '上海': '上海市', '重庆': '重庆市',
+            '河北': '河北省', '山西': '山西省', '辽宁': '辽宁省', '吉林': '吉林省',
+            '黑龙江': '黑龙江省', '江苏': '江苏省', '浙江': '浙江省', '安徽': '安徽省',
+            '福建': '福建省', '江西': '江西省', '山东': '山东省', '河南': '河南省',
+            '湖北': '湖北省', '湖南': '湖南省', '广东': '广东省', '海南': '海南省',
+            '四川': '四川省', '贵州': '贵州省', '云南': '云南省', '陕西': '陕西省',
+            '甘肃': '甘肃省', '青海': '青海省', '台湾': '台湾省',
+            '内蒙古': '内蒙古自治区', '广西': '广西壮族自治区', '西藏': '西藏自治区',
+            '宁夏': '宁夏回族自治区', '新疆': '新疆维吾尔自治区',
+            '香港': '香港特别行政区', '澳门': '澳门特别行政区'
+        }
+
+        logger.info(f"Connected to Neo4j at {uri}")
+
+    def close(self):
+        """关闭连接"""
+        self.driver.close()
+        logger.info("Neo4j connection closed")
+
+    def clear_database(self):
+        """清空数据库"""
+        logger.warning("Clearing database...")
+        with self.driver.session() as session:
+            session.run("MATCH (n) DETACH DELETE n")
+            logger.info("Database cleared successfully")
+
+    def create_constraints(self):
+        """创建约束"""
+        logger.info("Creating constraints...")
+        with self.driver.session() as session:
+            constraints = [
+                "CREATE CONSTRAINT patent_id IF NOT EXISTS FOR (p:Patent) REQUIRE p.patentId IS UNIQUE",
+                "CREATE CONSTRAINT entity_normalized_name IF NOT EXISTS FOR (e:Entity) REQUIRE e.normalizedName IS UNIQUE",
+                "CREATE CONSTRAINT techDomain_code IF NOT EXISTS FOR (t:TechDomain) REQUIRE t.code IS UNIQUE",
+                "CREATE CONSTRAINT date_value IF NOT EXISTS FOR (d:Date) REQUIRE d.dateValue IS UNIQUE",
+                "CREATE CONSTRAINT province_name IF NOT EXISTS FOR (p:Province) REQUIRE p.name IS UNIQUE",
+                "CREATE CONSTRAINT city_fullname IF NOT EXISTS FOR (c:City) REQUIRE c.fullName IS UNIQUE",
+                "CREATE CONSTRAINT district_fullname IF NOT EXISTS FOR (d:District) REQUIRE d.fullName IS UNIQUE",
+                "CREATE CONSTRAINT green_category_code IF NOT EXISTS FOR (g:GreenTechCategory) REQUIRE g.code IS UNIQUE"
+            ]
+
+            for constraint in constraints:
+                try:
+                    session.run(constraint)
+                    logger.info(f"✓ {constraint.split('CONSTRAINT')[1].split('IF')[0].strip()}")
+                except Exception as e:
+                    logger.debug(f"Constraint exists: {e}")
+
+    def create_indexes(self):
+        """创建索引(导入完成后)"""
+        logger.info("Creating indexes...")
+        with self.driver.session() as session:
+            indexes = [
+                "CREATE INDEX patent_pubNumber IF NOT EXISTS FOR (p:Patent) ON (p.pubNumber)",
+                "CREATE INDEX patent_appNumber IF NOT EXISTS FOR (p:Patent) ON (p.appNumber)",
+                "CREATE INDEX patent_titleZh IF NOT EXISTS FOR (p:Patent) ON (p.titleZh)",
+                "CREATE INDEX entity_type IF NOT EXISTS FOR (e:Entity) ON (e.type)",
+                "CREATE INDEX entity_name IF NOT EXISTS FOR (e:Entity) ON (e.name)",
+                "CREATE INDEX province_name_idx IF NOT EXISTS FOR (p:Province) ON (p.name)",
+                "CREATE INDEX city_name_idx IF NOT EXISTS FOR (c:City) ON (c.name)",
+                "CREATE INDEX techDomain_level IF NOT EXISTS FOR (t:TechDomain) ON (t.level)"
+            ]
+
+            for index in indexes:
+                try:
+                    session.run(index)
+                    logger.info(f"✓ {index.split('INDEX')[1].split('IF')[0].strip()}")
+                except Exception as e:
+                    logger.debug(f"Index exists: {e}")
+
+    def create_tech_domains(self):
+        """创建技术领域树"""
+        logger.info("Creating technology domain tree...")
+        domains = get_all_tech_domains()
+
+        with self.driver.session() as session:
+            query = """
+            UNWIND $domains AS domain
+            MERGE (t:TechDomain {code: domain.code})
+            SET t.nameZh = domain.nameZh,
+                t.nameEn = domain.nameEn,
+                t.level = domain.level
+            """
+            session.run(query, domains=domains)
+
+            # 创建SUBDOMAIN_OF关系
+            parent_rels = [{'child_code': d['code'], 'parent_code': d['parent_code']}
+                           for d in domains if d['parent_code']]
+
+            if parent_rels:
+                query = """
+                UNWIND $rels AS rel
+                MATCH (child:TechDomain {code: rel.child_code})
+                MATCH (parent:TechDomain {code: rel.parent_code})
+                MERGE (child)-[:SUBDOMAIN_OF]->(parent)
+                """
+                session.run(query, rels=parent_rels)
+
+            logger.info(f"✓ Created {len(domains)} technology domains")
+
+    def create_green_tech_categories(self):
+        """创建绿色技术分类节点"""
+        logger.info("Creating green technology categories...")
+
+        categories_list = []
+        for name, data in GREEN_TECH_CATEGORIES.items():
+            categories_list.append({
+                'code': data['code'],
+                'categoryType': data['categoryType'],
+                'definition': data['definition'],
+                'typicalExamples': data['typicalExamples']
+            })
+
+        with self.driver.session() as session:
+            query = """
+            UNWIND $categories AS cat
+            MERGE (g:GreenTechCategory {code: cat.code})
+            SET g.categoryType = cat.categoryType,
+                g.definition = cat.definition,
+                g.typicalExamples = cat.typicalExamples
+            """
+            session.run(query, categories=categories_list)
+            logger.info(f"✓ Created {len(categories_list)} green technology categories")
+
+    def extract_location_from_entity(self, entity_name):
+        """
+        从实体名称中提取地理位置信息 (基于规则)
+        返回: {'province': 'XX', 'city': 'XX', 'district': 'XX'}
+        """
+        if not entity_name or len(entity_name) < 2:
+            return None
+
+        result = {'province': None, 'city': None, 'district': None}
+
+        # 检查省份
+        for short_name, full_name in self.provinces.items():
+            if short_name in entity_name:
+                result['province'] = full_name
+
+                # 尝试提取市级信息
+                # 修复：将 {{2,8}} 改为 {2,8}（移除多余的大括号）
+                city_pattern = rf'{short_name}[省市]?([^省市县区]{2,8})市'
+                city_match = re.search(city_pattern, entity_name)
+                if city_match:
+                    result['city'] = city_match.group(1) + '市'
+
+                    # 尝试提取区县信息
+                    # 修复：将 {{2,6}} 改为 {2,6}（移除多余的大括号）
+                    district_pattern = rf"{city_match.group(1)}市([^市县区]{2,6})[县区]"
+                    district_match = re.search(district_pattern, entity_name)
+                    if district_match:
+                        result['district'] = district_match.group(1)
+                        # 判断是县还是区
+                        if '县' in entity_name[district_match.end() - 1:district_match.end() + 1]:
+                            result['district'] += '县'
+                        else:
+                            result['district'] += '区'
+
+                break
+
+        # 如果找到了至少省份信息,返回结果
+        if result['province']:
+            return result
+
+        return None
+
+    def normalize_patent_number(self, number_str):
+        """规范化专利号"""
+        if pd.isna(number_str) or not number_str:
+            return None
+        normalized = str(number_str).strip().replace(' ', '').replace('\n', '')
+        return normalized if normalized else None
+
+    def normalize_entity_name(self, name_str):
+        """规范化实体名称"""
+        if pd.isna(name_str) or not name_str:
+            return None
+
+        name = str(name_str).strip()
+        if len(name) < 2:
+            return None
+
+        # 移除常见公司后缀
+        common_suffixes = [
+            '有限责任公司', '股份有限公司', '有限公司',
+            'Co.,Ltd.', 'Co., Ltd.', 'Co.,Ltd', 'Co., Ltd',
+            'Ltd.', 'Ltd', 'Inc.', 'Inc', 'Corp.', 'Corp',
+            'LIMITED', 'CORPORATION', 'INCORPORATED'
+        ]
+
+        original_name = name
+        for suffix in common_suffixes:
+            if name.endswith(suffix):
+                name = name[:-len(suffix)].strip()
+                break
+
+        if not name or len(name) < 2:
+            return original_name
+
+        # 移除多余的空格和标点
+        name = re.sub(r'\s+', '', name)
+        name = re.sub(r'[（）\(\)【】\[\]《》<>]', '', name)
+
+        return name if name and len(name) >= 2 else original_name
+
+    def parse_date(self, date_str):
+        """解析日期为YYYY-MM-DD格式"""
+        if pd.isna(date_str) or not date_str:
+            return None
+
+        date_str = str(date_str).strip()
+        formats = ['%Y-%m-%d', '%Y/%m/%d', '%Y.%m.%d', '%Y%m%d',
+                   '%Y-%m-%d %H:%M:%S', '%Y/%m/%d %H:%M:%S']
+
+        for fmt in formats:
+            try:
+                return datetime.strptime(date_str, fmt).strftime('%Y-%m-%d')
+            except ValueError:
+                continue
+        return None
+
+    def split_entities(self, entity_str):
+        """分割实体字符串"""
+        if pd.isna(entity_str) or not entity_str:
+            return []
+        entity_str = str(entity_str).strip()
+        entities = re.split(r'[;,、；]', entity_str)
+        return [e.strip() for e in entities if e.strip() and len(e.strip()) >= 2]
+
+    def process_file_data(self, file_path, tech_domain_code):
+        """处理单个文件,返回结构化数据"""
+        logger.info(f"Processing: {os.path.basename(file_path)}")
+
+        df = pd.read_excel(file_path)
+        patents_list = []
+        stats = {'total': 0, 'valid': 0, 'skipped': 0}
+
+        for idx, row in df.iterrows():
+            stats['total'] += 1
+
+            pub_number = self.normalize_patent_number(row.get('公开(公告)号'))
+            app_number = self.normalize_patent_number(row.get('申请号'))
+
+            if not pub_number and not app_number:
+                stats['skipped'] += 1
+                continue
+
+            patent_id = pub_number if pub_number else app_number
+
+            patent_data = {
+                'patentId': patent_id,
+                'pubNumber': pub_number,
+                'appNumber': app_number,
+                'titleZh': str(row.get('标题 (中文)', '')).strip() or None,
+                'titleEn': str(row.get('标题 (英文)', '')).strip() or None,
+                'abstractZh': str(row.get('摘要 (中文)', '')).strip() or None,
+                'abstractEn': str(row.get('摘要 (英文)', '')).strip() or None,
+                'patentType': str(row.get('专利类型', '')).strip() or None,
+                'legalStatus': str(row.get('当前法律状态', '')).strip() or None,
+                'ipcMainClass': str(row.get('IPC主分类', '')).strip() or None,
+                'publicCountry': str(row.get('公开国别', '')).strip() or None,
+                'techDomainCode': tech_domain_code,
+
+                'applicants': self.split_entities(row.get('申请人')),
+                'currentOwners': self.split_entities(row.get('当前权利人')),
+                'appDate': self.parse_date(row.get('申请日')),
+                'pubDate': self.parse_date(
+                    row.get('公开(公告)日\n(如专利类型为"发明授权"或"实用新型"或"外观设计"的,此项为授权公告日)')),
+                'familyPatents': self.split_entities(row.get('简单同族')),
+                'assignors': self.split_entities(row.get('转让人')),
+                'assignees': self.split_entities(row.get('受让人')),
+                'licensors': self.split_entities(row.get('许可人')),
+                'currentLicensees': self.split_entities(row.get('当前被许可人')),
+                'pledgors': self.split_entities(row.get('出质人')),
+                'pledgees': self.split_entities(row.get('质权人')),
+                'plaintiffs': self.split_entities(row.get('原告')),
+                'defendants': self.split_entities(row.get('被告'))
+            }
+
+            patents_list.append(patent_data)
+            stats['valid'] += 1
+
+        logger.info(f"✓ Processed {os.path.basename(file_path)}: "
+                    f"{stats['valid']}/{stats['total']} valid patents, "
+                    f"{stats['skipped']} skipped")
+        return patents_list
+
+    def batch_create_all_nodes_and_relationships(self, patents_batch):
+        """批量创建所有节点和关系"""
+        with self.driver.session() as session:
+            # 准备批量数据
+            batch_data = []
+
+            for patent in patents_batch:
+                item = {
+                    'patent': {
+                        'patentId': patent['patentId'],
+                        'pubNumber': patent['pubNumber'],
+                        'appNumber': patent['appNumber'],
+                        'titleZh': patent['titleZh'],
+                        'titleEn': patent['titleEn'],
+                        'abstractZh': patent['abstractZh'],
+                        'abstractEn': patent['abstractEn'],
+                        'patentType': patent['patentType'],
+                        'legalStatus': patent['legalStatus'],
+                        'ipcMainClass': patent['ipcMainClass'],
+                        'publicCountry': patent['publicCountry'],
+                        'techDomainCode': patent['techDomainCode']
+                    },
+                    'dates': [],
+                    'entities': [],
+                    'familyPatents': patent.get('familyPatents', [])
+                }
+
+                # 添加日期信息
+                if patent['appDate']:
+                    item['dates'].append({
+                        'dateValue': patent['appDate'],
+                        'dateType': '申请日',
+                        'relType': 'FILED_ON'
+                    })
+                if patent['pubDate']:
+                    item['dates'].append({
+                        'dateValue': patent['pubDate'],
+                        'dateType': '公开公告日',
+                        'relType': 'PUBLISHED_ON'
+                    })
+
+                # 添加实体信息
+                for applicant in patent.get('applicants', []):
+                    normalized = self.normalize_entity_name(applicant)
+                    if normalized:
+                        location = self.extract_location_from_entity(applicant)
+                        item['entities'].append({
+                            'originalName': applicant,
+                            'normalizedName': normalized,
+                            'relType': 'APPLIED_BY',
+                            'location': location
+                        })
+
+                for owner in patent.get('currentOwners', []):
+                    normalized = self.normalize_entity_name(owner)
+                    if normalized:
+                        location = self.extract_location_from_entity(owner)
+                        item['entities'].append({
+                            'originalName': owner,
+                            'normalizedName': normalized,
+                            'relType': 'OWNED_BY',
+                            'location': location
+                        })
+
+                for assignor in patent.get('assignors', []):
+                    normalized = self.normalize_entity_name(assignor)
+                    if normalized:
+                        item['entities'].append({
+                            'originalName': assignor,
+                            'normalizedName': normalized,
+                            'relType': 'ASSIGNED_FROM',
+                            'location': None
+                        })
+
+                for assignee in patent.get('assignees', []):
+                    normalized = self.normalize_entity_name(assignee)
+                    if normalized:
+                        item['entities'].append({
+                            'originalName': assignee,
+                            'normalizedName': normalized,
+                            'relType': 'ASSIGNED_TO',
+                            'location': None
+                        })
+
+                for licensee in patent.get('currentLicensees', []):
+                    normalized = self.normalize_entity_name(licensee)
+                    if normalized:
+                        item['entities'].append({
+                            'originalName': licensee,
+                            'normalizedName': normalized,
+                            'relType': 'LICENSED_TO',
+                            'location': None
+                        })
+
+                for pledgor in patent.get('pledgors', []):
+                    normalized = self.normalize_entity_name(pledgor)
+                    if normalized:
+                        item['entities'].append({
+                            'originalName': pledgor,
+                            'normalizedName': normalized,
+                            'relType': 'PLEDGED_BY',
+                            'location': None
+                        })
+
+                for pledgee in patent.get('pledgees', []):
+                    normalized = self.normalize_entity_name(pledgee)
+                    if normalized:
+                        item['entities'].append({
+                            'originalName': pledgee,
+                            'normalizedName': normalized,
+                            'relType': 'PLEDGED_TO',
+                            'location': None
+                        })
+
+                for plaintiff in patent.get('plaintiffs', []):
+                    normalized = self.normalize_entity_name(plaintiff)
+                    if normalized:
+                        item['entities'].append({
+                            'originalName': plaintiff,
+                            'normalizedName': normalized,
+                            'relType': 'PLAINTIFF_IN',
+                            'location': None
+                        })
+
+                for defendant in patent.get('defendants', []):
+                    normalized = self.normalize_entity_name(defendant)
+                    if normalized:
+                        item['entities'].append({
+                            'originalName': defendant,
+                            'normalizedName': normalized,
+                            'relType': 'DEFENDANT_IN',
+                            'location': None
+                        })
+
+                batch_data.append(item)
+
+            # ========== 批量创建专利节点 ==========
+            session.run("""
+                UNWIND $batch AS item
+                MERGE (p:Patent {patentId: item.patent.patentId})
+                SET p.pubNumber = item.patent.pubNumber,
+                    p.appNumber = item.patent.appNumber,
+                    p.titleZh = item.patent.titleZh,
+                    p.titleEn = item.patent.titleEn,
+                    p.abstractZh = item.patent.abstractZh,
+                    p.abstractEn = item.patent.abstractEn,
+                    p.patentType = item.patent.patentType,
+                    p.legalStatus = item.patent.legalStatus,
+                    p.ipcMainClass = item.patent.ipcMainClass,
+                    p.publicCountry = item.patent.publicCountry
+            """, batch=batch_data)
+
+            # ========== 创建专利-技术领域关系(BELONGS_TO_TECH) ==========
+            # 注意：这是初步分类，LLM会进一步细化到三级分类
+            tech_rels = [{
+                'patentId': item['patent']['patentId'],
+                'techCode': item['patent']['techDomainCode']
+            } for item in batch_data if item['patent']['techDomainCode']]
+
+            if tech_rels:
+                session.run("""
+                    UNWIND $batch AS item
+                    MATCH (p:Patent {patentId: item.patentId})
+                    MATCH (t:TechDomain {code: item.techCode})
+                    MERGE (p)-[:BELONGS_TO_TECH {source: 'initial'}]->(t)
+                """, batch=tech_rels)
+
+            # ========== 批量创建日期节点和关系 ==========
+            date_batch = []
+            for item in batch_data:
+                for date_info in item['dates']:
+                    date_batch.append({
+                        'patentId': item['patent']['patentId'],
+                        'dateValue': date_info['dateValue'],
+                        'dateType': date_info['dateType'],
+                        'relType': date_info['relType']
+                    })
+
+            if date_batch:
+                # 先创建日期节点
+                session.run("""
+                    UNWIND $batch AS item
+                    MERGE (d:Date {dateValue: item.dateValue})
+                    SET d.dateType = item.dateType
+                """, batch=date_batch)
+
+                # 批量创建申请日关系
+                filed_dates = [d for d in date_batch if d['relType'] == 'FILED_ON']
+                if filed_dates:
+                    session.run("""
+                        UNWIND $batch AS item
+                        MATCH (p:Patent {patentId: item.patentId})
+                        MATCH (d:Date {dateValue: item.dateValue})
+                        MERGE (p)-[:FILED_ON]->(d)
+                    """, batch=filed_dates)
+
+                # 批量创建公开日关系
+                pub_dates = [d for d in date_batch if d['relType'] == 'PUBLISHED_ON']
+                if pub_dates:
+                    session.run("""
+                        UNWIND $batch AS item
+                        MATCH (p:Patent {patentId: item.patentId})
+                        MATCH (d:Date {dateValue: item.dateValue})
+                        MERGE (p)-[:PUBLISHED_ON]->(d)
+                    """, batch=pub_dates)
+
+            # ========== 批量创建实体节点 ==========
+            entity_batch = []
+            for item in batch_data:
+                for entity_info in item['entities']:
+                    entity_batch.append({
+                        'normalizedName': entity_info['normalizedName'],
+                        'originalName': entity_info['originalName']
+                    })
+
+            if entity_batch:
+                # 去重
+                unique_entities = {e['normalizedName']: e for e in entity_batch}.values()
+                session.run("""
+                    UNWIND $batch AS item
+                    MERGE (e:Entity {normalizedName: item.normalizedName})
+                    SET e.name = item.originalName,
+                        e.type = CASE
+                            WHEN item.originalName =~ '.*公司.*|.*Corp.*|.*Ltd.*|.*Inc.*' THEN '企业'
+                            ELSE '个人/其他'
+                        END
+                """, batch=list(unique_entities))
+
+            # ========== 批量创建专利-实体关系 ==========
+            # 按关系类型分组
+            rel_by_type = {}
+            for item in batch_data:
+                for entity_info in item['entities']:
+                    rel_type = entity_info['relType']
+                    if rel_type not in rel_by_type:
+                        rel_by_type[rel_type] = []
+                    rel_by_type[rel_type].append({
+                        'patentId': item['patent']['patentId'],
+                        'normalizedName': entity_info['normalizedName']
+                    })
+
+            # 批量创建每种类型的关系
+            for rel_type, rels in rel_by_type.items():
+                if rels:
+                    session.run(f"""
+                        UNWIND $batch AS item
+                        MATCH (p:Patent {{patentId: item.patentId}})
+                        MATCH (e:Entity {{normalizedName: item.normalizedName}})
+                        MERGE (p)-[:{rel_type}]->(e)
+                    """, batch=rels)
+
+            # ========== 批量创建地理节点和关系 ==========
+            province_batch = []
+            city_batch = []
+            district_batch = []
+
+            for item in batch_data:
+                for entity_info in item['entities']:
+                    if entity_info['location']:
+                        loc = entity_info['location']
+
+                        # 收集省份数据
+                        if loc['province']:
+                            province_batch.append({
+                                'normalizedName': entity_info['normalizedName'],
+                                'provinceName': loc['province']
+                            })
+
+                        # 收集城市数据
+                        if loc['city'] and loc['province']:
+                            city_batch.append({
+                                'normalizedName': entity_info['normalizedName'],
+                                'fullName': f"{loc['province']}-{loc['city']}",
+                                'cityName': loc['city'],
+                                'provinceName': loc['province']
+                            })
+
+                        # 收集区县数据
+                        if loc['district'] and loc['city'] and loc['province']:
+                            district_batch.append({
+                                'normalizedName': entity_info['normalizedName'],
+                                'fullName': f"{loc['province']}-{loc['city']}-{loc['district']}",
+                                'districtName': loc['district'],
+                                'cityName': loc['city'],
+                                'provinceName': loc['province']
+                            })
+
+            # 批量创建省份节点和关系
+            if province_batch:
+                session.run("""
+                    UNWIND $batch AS item
+                    MERGE (p:Province {name: item.provinceName})
+                """, batch=province_batch)
+
+                session.run("""
+                    UNWIND $batch AS item
+                    MATCH (e:Entity {normalizedName: item.normalizedName})
+                    MATCH (p:Province {name: item.provinceName})
+                    MERGE (e)-[:LOCATED_IN_PROVINCE]->(p)
+                """, batch=province_batch)
+
+            # 批量创建城市节点和关系
+            if city_batch:
+                session.run("""
+                    UNWIND $batch AS item
+                    MERGE (c:City {fullName: item.fullName})
+                    SET c.name = item.cityName,
+                        c.province = item.provinceName
+                """, batch=city_batch)
+
+                session.run("""
+                    UNWIND $batch AS item
+                    MATCH (e:Entity {normalizedName: item.normalizedName})
+                    MATCH (c:City {fullName: item.fullName})
+                    MERGE (e)-[:LOCATED_IN_CITY]->(c)
+                """, batch=city_batch)
+
+            # 批量创建区县节点和关系
+            if district_batch:
+                session.run("""
+                    UNWIND $batch AS item
+                    MERGE (d:District {fullName: item.fullName})
+                    SET d.name = item.districtName,
+                        d.city = item.cityName,
+                        d.province = item.provinceName
+                """, batch=district_batch)
+
+                session.run("""
+                    UNWIND $batch AS item
+                    MATCH (e:Entity {normalizedName: item.normalizedName})
+                    MATCH (d:District {fullName: item.fullName})
+                    MERGE (e)-[:LOCATED_IN_DISTRICT]->(d)
+                """, batch=district_batch)
+
+            # ========== 批量创建同族专利关系 ==========
+            family_batch = []
+            for item in batch_data:
+                if item['familyPatents']:
+                    for family_patent in item['familyPatents']:
+                        family_patent_normalized = self.normalize_patent_number(family_patent)
+                        if family_patent_normalized:
+                            family_batch.append({
+                                'patent1': item['patent']['patentId'],
+                                'patent2': family_patent_normalized
+                            })
+
+            if family_batch:
+                session.run("""
+                    UNWIND $batch AS item
+                    MATCH (p1:Patent {patentId: item.patent1})
+                    MERGE (p2:Patent {patentId: item.patent2})
+                    MERGE (p1)-[:HAS_FAMILY]-(p2)
+                """, batch=family_batch)
+
+    def import_all_data(self):
+        """导入所有数据"""
+        logger.info("Starting data import...")
+
+        data_dir = DATA_CONFIG['data_dir']
+        file_mapping = DATA_CONFIG['file_mapping']
+
+        all_patents = []
+
+        # 处理所有文件
+        for filename, tech_code in file_mapping.items():
+            file_path = os.path.join(data_dir, filename)
+            if os.path.exists(file_path):
+                patents = self.process_file_data(file_path, tech_code)
+                all_patents.extend(patents)
+            else:
+                logger.warning(f"File not found: {file_path}")
+
+        logger.info(f"Total patents to import: {len(all_patents)}")
+
+        # 分批导入
+        total_batches = (len(all_patents) + self.batch_size - 1) // self.batch_size
+
+        for i in range(0, len(all_patents), self.batch_size):
+            batch = all_patents[i:i + self.batch_size]
+            batch_num = i // self.batch_size + 1
+
+            logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} patents)...")
+            self.batch_create_all_nodes_and_relationships(batch)
+
+        logger.info(f"✓ Imported {len(all_patents)} patents successfully")
+
+
+def main():
+    """主函数"""
+    parser = argparse.ArgumentParser(description='Import patent data into Neo4j knowledge graph')
+    parser.add_argument('--clear', action='store_true', help='Clear database before import')
+    args = parser.parse_args()
+
+    builder = PatentKnowledgeGraphBuilder(
+        NEO4J_CONFIG['uri'],
+        NEO4J_CONFIG['user'],
+        NEO4J_CONFIG['password'],
+        batch_size=5000
+    )
+
+    try:
+        if args.clear:
+            builder.clear_database()
+
+        logger.info("=" * 60)
+        logger.info("Starting Knowledge Graph Construction")
+        logger.info("=" * 60)
+
+        # Step 1: 创建约束
+        builder.create_constraints()
+
+        # Step 2: 创建技术领域树
+        builder.create_tech_domains()
+
+        # Step 3: 创建绿色技术分类节点
+        builder.create_green_tech_categories()
+
+        # Step 4: 导入专利数据
+        start_time = datetime.now()
+        builder.import_all_data()
+        end_time = datetime.now()
+
+        logger.info(f"Import time: {(end_time - start_time).total_seconds():.2f} seconds")
+
+        # Step 5: 创建索引
+        builder.create_indexes()
+
+        logger.info("=" * 60)
+        logger.info("✓ Knowledge Graph Construction Completed!")
+        logger.info("✓ Next step: run llm_generate_json.py for LLM-based enhancements")
+        logger.info("=" * 60)
+
+    except Exception as e:
+        logger.error(f"Error: {e}", exc_info=True)
+        raise
+    finally:
+        builder.close()
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+llm_generate_json.py:
+# -*- coding: utf-8 -*-
+"""
+LLM数据生成模块 - 批量保存到JSON（完整修改版 - 修复自动恢复会话）
+功能:
+1. 使用LLM分析专利数据（技术领域分类、绿色技术分类）
+2. 使用可联网LLM提取实体地理位置信息
+3. 将结果实时批量保存到JSON文件
+4. 自动检测并恢复最新会话（修复）
+5. 线程安全的增量写入
+6. 每个小批次完成后立即保存进度
+"""
+
+import os
+import json
+import logging
+from datetime import datetime
+from neo4j import GraphDatabase
+from openai import OpenAI
+from config import NEO4J_CONFIG, LLM_CONFIG, LLM_ENHANCE_CONFIG, GREEN_TECH_CATEGORIES
+from tech_domains import get_tech_tree_text
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+import signal
+import sys
+from typing import List, Dict, Optional
+import threading
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('llm_generate_json.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+
+class JSONStorage:
+    """JSON文件存储管理器 - 支持断点续传和实时保存"""
+
+    def __init__(self, output_dir: str, session_id: str):
+        self.output_dir = output_dir
+        self.session_id = session_id
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 各类数据的JSON文件路径
+        self.files = {
+            'green_classifications': os.path.join(output_dir, f'{session_id}_green_classifications.json'),
+            'tech_classifications': os.path.join(output_dir, f'{session_id}_tech_classifications.json'),
+            'entity_locations': os.path.join(output_dir, f'{session_id}_entity_locations.json'),
+            'progress': os.path.join(output_dir, f'{session_id}_progress.json')
+        }
+
+        self.lock = threading.Lock()
+
+        # 加载已有数据
+        self.data = {
+            'green_classifications': self._load_json('green_classifications'),
+            'tech_classifications': self._load_json('tech_classifications'),
+            'entity_locations': self._load_json('entity_locations'),
+            'progress': self._load_json('progress') or {'processed_patents': [], 'processed_entities': [], 'session_id': session_id}
+        }
+
+    def _load_json(self, data_type: str):
+        """加载JSON文件"""
+        filepath = self.files[data_type]
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if data_type == 'progress':
+                        logger.info(f"✓ 已加载进度: {len(data.get('processed_patents', []))} 个专利已处理")
+                    else:
+                        logger.info(f"✓ 已加载 {data_type}: {len(data) if isinstance(data, list) else 'N/A'} 条记录")
+                    return data
+            except Exception as e:
+                logger.warning(f"加载 {data_type} 失败: {e}")
+                if data_type == 'progress':
+                    return {'processed_patents': [], 'processed_entities': [], 'session_id': self.session_id}
+                return []
+        return [] if data_type != 'progress' else {'processed_patents': [], 'processed_entities': [], 'session_id': self.session_id}
+
+    def _save_json(self, data_type: str):
+        """保存JSON文件 - 使用原子操作"""
+        filepath = self.files[data_type]
+        try:
+            # 先写入临时文件,再重命名(原子操作,防止写入过程中断导致文件损坏)
+            temp_filepath = filepath + '.tmp'
+            with open(temp_filepath, 'w', encoding='utf-8') as f:
+                json.dump(self.data[data_type], f, ensure_ascii=False, indent=2)
+
+            # 重命名
+            if os.path.exists(filepath):
+                os.remove(filepath)
+            os.rename(temp_filepath, filepath)
+
+        except Exception as e:
+            logger.error(f"保存 {data_type} 失败: {e}")
+
+    def append_data(self, data_type: str, items: List[Dict]):
+        """追加数据到JSON文件并立即保存"""
+        with self.lock:
+            if data_type == 'progress':
+                # progress特殊处理
+                if 'patents' in str(items):
+                    self.data[data_type]['processed_patents'].extend(items)
+                elif 'entities' in str(items):
+                    self.data[data_type]['processed_entities'].extend(items)
+            else:
+                self.data[data_type].extend(items)
+            self._save_json(data_type)
+
+    def mark_processed_patents(self, patent_ids: List[str]):
+        """标记专利为已处理并立即保存"""
+        with self.lock:
+            self.data['progress']['processed_patents'].extend(patent_ids)
+            self.data['progress']['last_update'] = datetime.now().isoformat()
+            self._save_json('progress')
+
+    def mark_processed_entities(self, entity_names: List[str]):
+        """标记实体为已处理并立即保存"""
+        with self.lock:
+            self.data['progress']['processed_entities'].extend(entity_names)
+            self.data['progress']['last_update'] = datetime.now().isoformat()
+            self._save_json('progress')
+
+    def is_patent_processed(self, patent_id: str) -> bool:
+        """检查专利是否已处理"""
+        return patent_id in self.data['progress']['processed_patents']
+
+    def is_entity_processed(self, entity_name: str) -> bool:
+        """检查实体是否已处理"""
+        return entity_name in self.data['progress']['processed_entities']
+
+    def get_processed_count(self) -> Dict:
+        """获取已处理的数量"""
+        return {
+            'patents': len(self.data['progress']['processed_patents']),
+            'entities': len(self.data['progress']['processed_entities'])
+        }
+
+    def get_stats(self) -> Dict:
+        """获取统计信息"""
+        return {
+            'session_id': self.session_id,
+            'processed_patents': len(self.data['progress']['processed_patents']),
+            'processed_entities': len(self.data['progress']['processed_entities']),
+            'green_classifications': len(self.data['green_classifications']),
+            'tech_classifications': len(self.data['tech_classifications']),
+            'entity_locations': len(self.data['entity_locations'])
+        }
+
+
+class LLMDataGenerator:
+    """LLM数据生成器 - 支持实时保存和断点续传"""
+
+    def __init__(self, session_id: Optional[str] = None):
+        """初始化"""
+        # Neo4j连接(仅用于读取专利和实体数据)
+        self.driver = GraphDatabase.driver(
+            NEO4J_CONFIG['uri'],
+            auth=(NEO4J_CONFIG['user'], NEO4J_CONFIG['password']),
+            max_connection_lifetime=3600,
+            max_connection_pool_size=50,
+            keep_alive=True
+        )
+
+        # OpenAI客户端
+        self.client = OpenAI(
+            api_key=LLM_CONFIG['api_key'],
+            base_url=LLM_CONFIG['api_base'],
+            timeout=60.0,
+            max_retries=3
+        )
+
+        # 会话ID
+        if session_id:
+            self.session_id = session_id
+            logger.info(f"恢复会话: {self.session_id}")
+        else:
+            self.session_id = datetime.now().strftime('%Y%m%d_%H%M%S')
+            logger.info(f"新建会话: {self.session_id}")
+
+        # JSON存储
+        self.storage = JSONStorage(LLM_ENHANCE_CONFIG['output_dir'], self.session_id)
+
+        # 技术树文本（用于LLM提示）
+        self.tech_tree_text = get_tech_tree_text()
+
+        # 信号处理标志
+        self.should_stop = False
+        self._setup_signal_handlers()
+
+    def _setup_signal_handlers(self):
+        """设置信号处理器"""
+
+        def signal_handler(signum, frame):
+            logger.info("\n⚠️ 接收到中断信号，正在安全退出...")
+            self.should_stop = True
+
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+    def close(self):
+        """关闭连接"""
+        self.driver.close()
+
+    def call_llm(self, prompt: str, max_retries: int = 3) -> Optional[str]:
+        """调用LLM API"""
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=LLM_CONFIG['model'],
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "你是专利分析专家。仔细分析输入,返回准确的JSON格式结果。"
+                        },
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=LLM_CONFIG['temperature'],
+                    max_tokens=LLM_CONFIG['max_tokens']
+                )
+
+                return response.choices[0].message.content.strip()
+
+            except Exception as e:
+                logger.warning(f"LLM调用失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # 指数退避
+                else:
+                    logger.error(f"LLM调用失败,已重试{max_retries}次")
+                    return None
+
+    def get_unprocessed_patents(self, limit: int = 100) -> List[Dict]:
+        """获取未处理的专利"""
+        with self.driver.session() as session:
+            query = """
+            MATCH (p:Patent)
+            WHERE p.titleZh IS NOT NULL AND p.abstractZh IS NOT NULL
+            RETURN p.patentId AS patentId,
+                   p.titleZh AS titleZh,
+                   p.abstractZh AS abstractZh,
+                   p.titleEn AS titleEn,
+                   p.abstractEn AS abstractEn,
+                   p.ipcMainClass AS ipcMainClass,
+                   p.patentType AS patentType
+            ORDER BY p.patentId
+            """
+            result = session.run(query)
+
+            patents = []
+            for record in result:
+                patent = dict(record)
+                if not self.storage.is_patent_processed(patent['patentId']):
+                    patents.append(patent)
+                    if len(patents) >= limit:
+                        break
+
+            return patents
+
+    def get_unprocessed_entities(self, limit: int = 100) -> List[Dict]:
+        """获取未处理的实体（需要地理位置信息的）"""
+        with self.driver.session() as session:
+            query = """
+            MATCH (e:Entity)
+            WHERE NOT (e)-[:LOCATED_IN_PROVINCE]->()
+            RETURN e.normalizedName AS normalizedName,
+                   e.name AS name,
+                   e.type AS type
+            ORDER BY e.normalizedName
+            LIMIT $limit
+            """
+            result = session.run(query, limit=limit * 2)
+
+            entities = []
+            for record in result:
+                entity = dict(record)
+                if not self.storage.is_entity_processed(entity['normalizedName']):
+                    entities.append(entity)
+                    if len(entities) >= limit:
+                        break
+
+            return entities
+
+    def get_total_patents_count(self) -> int:
+        """获取专利总数"""
+        with self.driver.session() as session:
+            result = session.run(
+                "MATCH (p:Patent) WHERE p.titleZh IS NOT NULL RETURN count(p) AS cnt"
+            )
+            return result.single()['cnt']
+
+    def get_total_entities_count(self) -> int:
+        """获取实体总数"""
+        with self.driver.session() as session:
+            result = session.run(
+                "MATCH (e:Entity) WHERE NOT (e)-[:LOCATED_IN_PROVINCE]->() RETURN count(e) AS cnt"
+            )
+            return result.single()['cnt']
+
+    def classify_green_technology(self, patents: List[Dict]) -> List[Dict]:
+        """分类绿色技术（五分类）"""
+        # 构建分类说明
+        categories_desc = []
+        for name, data in GREEN_TECH_CATEGORIES.items():
+            examples_str = "\n      ".join([f"• {ex}" for ex in data['typicalExamples']])
+            categories_desc.append(
+                f"**{data['categoryType']}** (代码: {data['code']})\n"
+                f"  定义: {data['definition']}\n"
+                f"  典型示例:\n      {examples_str}"
+            )
+
+        categories_text = "\n\n".join(categories_desc)
+
+        # 构建专利信息(每批最多5个)
+        patents_info = []
+        for i, p in enumerate(patents[:5]):
+            patents_info.append(
+                f"### 专利{i + 1}\n"
+                f"ID: {p['patentId']}\n"
+                f"标题: {p['titleZh']}\n"
+                f"摘要: {p['abstractZh'][:300]}...\n"
+                f"IPC: {p.get('ipcMainClass', '未知')}"
+            )
+
+        prompt = f"""请对以下氢能专利进行绿色技术五分类。
+
+{chr(10).join(patents_info)}
+
+## 分类标准
+
+{categories_text}
+
+## 分析要点
+
+1. 识别核心技术路径(电解制氢/化石能源制氢/储运/应用)
+2. 判断能源来源依赖(可再生能源/化石能源/通用)
+3. 评估碳排放特征(零碳/低碳/高碳/中性)
+4. 确定是否锁定特定路径
+5. 综合判断所属类别
+
+## 输出格式
+
+返回JSON数组,每个专利一个对象:
+```json
+[
+  {{
+    "patent_id": "专利ID",
+    "category_code": "GT1",
+    "category_type": "零碳使能型",
+    "confidence": 0.9,
+    "reasoning": "详细的分类理由"
+  }}
+]
+```
+
+只返回JSON,不要其他内容。"""
+
+        response = self.call_llm(prompt)
+        if not response:
+            return []
+
+        try:
+            # 提取JSON
+            json_start = response.find('[')
+            json_end = response.rfind(']') + 1
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start:json_end]
+                results = json.loads(json_str)
+                return results if isinstance(results, list) else []
+        except json.JSONDecodeError as e:
+            logger.warning(f"解析绿色分类结果失败: {e}")
+            return []
+
+    def classify_tech_domain(self, patents: List[Dict]) -> List[Dict]:
+        """细化技术领域分类（优先三级，不行再二级）"""
+        patents_info = []
+        for i, p in enumerate(patents[:5]):
+            patents_info.append(
+                f"### 专利{i + 1}\n"
+                f"ID: {p['patentId']}\n"
+                f"标题: {p['titleZh']}\n"
+                f"摘要: {p['abstractZh'][:300]}...\n"
+                f"IPC: {p.get('ipcMainClass', '未知')}"
+            )
+
+        prompt = f"""请为以下氢能专利识别其所属的技术领域。
+
+{chr(10).join(patents_info)}
+
+## 技术领域分类体系
+
+{self.tech_tree_text}
+
+## 分类原则
+
+1. **优先三级分类**：尽可能识别到L3（三级）具体技术
+2. **二级分类作为备选**：如果无法明确到L3，则分类到L2（二级）
+3. **一级分类仅作兜底**：只有在完全无法判断具体技术时，才使用L1
+4. **H4为其他类别**：如果专利明确不属于制、储运、用任何一类，归入H4
+5. **可多分类**：一个专利可以属于多个技术领域
+
+## 分类步骤
+
+1. 首先判断专利属于哪个一级类别（H1制氢/H2储运/H3用氢/H4其他）
+2. 然后识别具体的二级技术路径
+3. 最后细化到三级技术（这是最重要的）
+4. 如果三级无法确定，保留二级分类
+
+## 输出格式
+
+返回JSON数组,每个专利一个对象:
+```json
+[
+  {{
+    "patent_id": "专利ID",
+    "tech_domains": [
+      {{
+        "code": "H1.1.2",
+        "level": 3,
+        "confidence": 0.95,
+        "reasoning": "专利描述了质子交换膜电解槽的优化技术"
+      }},
+      {{
+        "code": "H1.3.1",
+        "level": 3,
+        "confidence": 0.85,
+        "reasoning": "涉及风光电制氢系统集成"
+      }}
+    ]
+  }}
+]
+```
+
+注意：
+- 优先返回level=3的分类
+- 如果确实无法细化到三级，才返回level=2
+- code必须是技术树中存在的代码
+- 每个专利至少返回一个技术领域
+
+只返回JSON,不要其他内容。"""
+
+        response = self.call_llm(prompt)
+        if not response:
+            return []
+
+        try:
+            # 提取JSON
+            json_start = response.find('[')
+            json_end = response.rfind(']') + 1
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start:json_end]
+                results = json.loads(json_str)
+                return results if isinstance(results, list) else []
+        except json.JSONDecodeError as e:
+            logger.warning(f"解析技术分类结果失败: {e}")
+            return []
+
+    def extract_entity_locations(self, entities: List[Dict]) -> List[Dict]:
+        """提取实体地理位置（使用可联网LLM查询）"""
+        entities_info = []
+        for i, e in enumerate(entities[:10]):  # 每批最多10个实体
+            entities_info.append(
+                f"{i + 1}. {e['name']} (标准化名称: {e['normalizedName']}, 类型: {e['type']})"
+            )
+
+        prompt = f"""请查询以下实体（公司/组织）的注册地址信息。这些都是氢能领域的相关实体。
+
+{chr(10).join(entities_info)}
+
+## 要求
+
+1. **必须进行联网查询**：使用搜索引擎查询每个实体的官方注册地址
+2. **返回标准化地址**：省份、城市、区县（如有）
+3. **准确性优先**：如果查不到准确信息，confidence设为0，不要猜测
+
+## 输出格式
+
+返回JSON数组:
+```json
+[
+  {{
+    "normalized_name": "实体标准化名称",
+    "province": "XX省/市/自治区",
+    "city": "XX市",
+    "district": "XX区/县",
+    "confidence": 0.95,
+    "source": "查询来源说明"
+  }}
+]
+```
+
+注意：
+- province必须是完整的省级名称（如"北京市"、"广东省"、"内蒙古自治区"）
+- 如果查询不到信息，该实体返回confidence=0
+- 只返回JSON,不要其他内容
+
+请立即进行联网查询并返回结果。"""
+
+        response = self.call_llm(prompt)
+        if not response:
+            return []
+
+        try:
+            # 提取JSON
+            json_start = response.find('[')
+            json_end = response.rfind(']') + 1
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start:json_end]
+                results = json.loads(json_str)
+                return results if isinstance(results, list) else []
+        except json.JSONDecodeError as e:
+            logger.warning(f"解析地理位置结果失败: {e}")
+            return []
+
+    def process_patents_batch(self, patents: List[Dict]):
+        """处理一批专利"""
+        if not patents:
+            return
+
+        patent_ids = [p['patentId'] for p in patents]
+        logger.info(f"处理专利批次: {len(patents)} 个")
+
+        # 1. 绿色技术分类
+        if LLM_ENHANCE_CONFIG['enable_green_classification']:
+            logger.info("  - 执行绿色技术分类...")
+            green_results = self.classify_green_technology(patents)
+            if green_results:
+                self.storage.append_data('green_classifications', green_results)
+                logger.info(f"    ✓ 已保存 {len(green_results)} 条绿色分类")
+
+        # 2. 技术领域分类
+        if LLM_ENHANCE_CONFIG['enable_tech_classification']:
+            logger.info("  - 执行技术领域分类...")
+            tech_results = self.classify_tech_domain(patents)
+            if tech_results:
+                self.storage.append_data('tech_classifications', tech_results)
+                logger.info(f"    ✓ 已保存 {len(tech_results)} 条技术分类")
+
+        # 3. 标记为已处理
+        self.storage.mark_processed_patents(patent_ids)
+
+    def process_entities_batch(self, entities: List[Dict]):
+        """处理一批实体"""
+        if not entities:
+            return
+
+        entity_names = [e['normalizedName'] for e in entities]
+        logger.info(f"处理实体批次: {len(entities)} 个")
+
+        # 地理位置提取
+        if LLM_ENHANCE_CONFIG['enable_location_extraction']:
+            logger.info("  - 执行地理位置提取...")
+            location_results = self.extract_entity_locations(entities)
+            if location_results:
+                self.storage.append_data('entity_locations', location_results)
+                logger.info(f"    ✓ 已保存 {len(location_results)} 条地理位置")
+
+        # 标记为已处理
+        self.storage.mark_processed_entities(entity_names)
+
+    def generate_all(self):
+        """生成所有数据"""
+        logger.info("=" * 60)
+        logger.info("开始LLM数据生成")
+        logger.info(f"会话ID: {self.session_id}")
+        logger.info("=" * 60)
+
+        start_time = datetime.now()
+
+        # 统计总数
+        total_patents = self.get_total_patents_count()
+        total_entities = self.get_total_entities_count()
+        processed = self.storage.get_processed_count()
+
+        logger.info(f"专利总数: {total_patents}, 已处理: {processed['patents']}, 待处理: {total_patents - processed['patents']}")
+        logger.info(f"实体总数: {total_entities}, 已处理: {processed['entities']}, 待处理: {total_entities - processed['entities']}")
+
+        # 处理专利
+        logger.info("\n" + "=" * 60)
+        logger.info("处理专利数据")
+        logger.info("=" * 60)
+
+        batch_size = LLM_ENHANCE_CONFIG['batch_size']
+        while not self.should_stop:
+            patents = self.get_unprocessed_patents(limit=batch_size)
+            if not patents:
+                logger.info("✓ 所有专利已处理完成")
+                break
+
+            self.process_patents_batch(patents)
+            time.sleep(1)  # 避免过于频繁调用API
+
+        # 处理实体
+        logger.info("\n" + "=" * 60)
+        logger.info("处理实体数据")
+        logger.info("=" * 60)
+
+        while not self.should_stop:
+            entities = self.get_unprocessed_entities(limit=10)  # 实体批次小一些
+            if not entities:
+                logger.info("✓ 所有实体已处理完成")
+                break
+
+            self.process_entities_batch(entities)
+            time.sleep(2)  # 联网查询需要更长间隔
+
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+        # 打印统计
+        stats = self.storage.get_stats()
+        logger.info("\n" + "=" * 60)
+        logger.info("数据生成完成")
+        logger.info("=" * 60)
+        logger.info(f"会话ID: {self.session_id}")
+        logger.info(f"耗时: {duration:.2f} 秒")
+        logger.info(f"\n生成统计:")
+        logger.info(f"  - 已处理专利: {stats['processed_patents']}")
+        logger.info(f"  - 已处理实体: {stats['processed_entities']}")
+        logger.info(f"  - 绿色技术分类: {stats['green_classifications']} 条")
+        logger.info(f"  - 技术领域分类: {stats['tech_classifications']} 条")
+        logger.info(f"  - 实体地理位置: {stats['entity_locations']} 条")
+        logger.info("=" * 60)
+        logger.info(f"\n下一步: 运行 llm_import_to_neo4j.py --session {self.session_id}")
+
+
+def list_available_sessions(output_dir: str = None):
+    """列出所有可用的会话"""
+    output_dir = output_dir or LLM_ENHANCE_CONFIG['output_dir']
+
+    if not os.path.exists(output_dir):
+        logger.info(f"输出目录不存在: {output_dir}")
+        return []
+
+    # 查找所有progress.json文件
+    sessions = []
+    for filename in os.listdir(output_dir):
+        if filename.endswith('_progress.json'):
+            session_id = filename.replace('_progress.json', '')
+
+            # 读取进度信息
+            filepath = os.path.join(output_dir, filename)
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    progress = json.load(f)
+                    sessions.append({
+                        'session_id': session_id,
+                        'processed_patents': len(progress.get('processed_patents', [])),
+                        'processed_entities': len(progress.get('processed_entities', [])),
+                        'last_update': progress.get('last_update', 'Unknown')
+                    })
+            except:
+                pass
+
+    return sorted(sessions, key=lambda x: x['session_id'], reverse=True)
+
+
+def main():
+    """主函数"""
+    import sys
+
+    session_id = None
+    list_sessions_flag = False
+
+    # 解析命令行参数
+    if len(sys.argv) > 1:
+        if sys.argv[1] == '--session':
+            session_id = sys.argv[2] if len(sys.argv) > 2 else None
+        elif sys.argv[1] == '--list':
+            list_sessions_flag = True
+        elif sys.argv[1] == '--new':
+            # 明确指定创建新会话
+            session_id = None
+        elif sys.argv[1] == '--help':
+            print("用法:")
+            print("  python llm_generate_json.py              # 自动恢复最新会话（如果存在）")
+            print("  python llm_generate_json.py --new        # 强制创建新会话")
+            print("  python llm_generate_json.py --session <session_id>  # 恢复指定会话")
+            print("  python llm_generate_json.py --list       # 列出所有会话")
+            return
+
+    # 如果是列表命令
+    if list_sessions_flag:
+        logger.info("可用的会话:")
+        sessions = list_available_sessions()
+        if not sessions:
+            logger.info("  (没有找到会话)")
+        else:
+            for sess in sessions:
+                logger.info(f"  - {sess['session_id']}")
+                logger.info(f"    已处理专利: {sess['processed_patents']}")
+                logger.info(f"    已处理实体: {sess['processed_entities']}")
+                logger.info(f"    最后更新: {sess['last_update']}")
+        return
+
+    # ===== 关键修复：自动恢复最新会话 =====
+    if session_id is None and '--new' not in sys.argv:
+        # 尝试使用最新的会话
+        sessions = list_available_sessions()
+        if sessions:
+            session_id = sessions[0]['session_id']
+            logger.info(f"⚙️  自动恢复最新会话: {session_id}")
+            logger.info(f"    (使用 --new 参数可以强制创建新会话)")
+        else:
+            logger.info("⚙️  没有找到已有会话，将创建新会话")
+
+    generator = LLMDataGenerator(session_id)
+
+    try:
+        generator.generate_all()
+        logger.info("\n✓ 所有数据已成功生成并保存到JSON!")
+
+    except Exception as e:
+        logger.error(f"生成失败: {e}", exc_info=True)
+        raise
+    finally:
+        generator.close()
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+llm_import_to_neo4j.py:
+# -*- coding: utf-8 -*-
+"""
+LLM数据导入Neo4j模块（修改版）
+功能:
+1. 从JSON文件读取LLM生成的数据
+2. 批量导入到Neo4j数据库
+3. 创建相应的关系
+"""
+
+import os
+import json
+import logging
+from datetime import datetime
+from neo4j import GraphDatabase
+from config import NEO4J_CONFIG, LLM_ENHANCE_CONFIG
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('llm_import_to_neo4j.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+
+class Neo4jImporter:
+    """Neo4j导入器 - 从JSON导入到数据库"""
+
+    def __init__(self, session_id: str):
+        """初始化"""
+        self.session_id = session_id
+        self.output_dir = LLM_ENHANCE_CONFIG['output_dir']
+
+        # Neo4j连接
+        self.driver = GraphDatabase.driver(
+            NEO4J_CONFIG['uri'],
+            auth=(NEO4J_CONFIG['user'], NEO4J_CONFIG['password']),
+            max_connection_pool_size=100,
+            connection_timeout=60
+        )
+
+        # 导入统计
+        self.import_stats = {
+            'green_classifications': 0,
+            'tech_classifications': 0,
+            'entity_locations': 0,
+            'errors': []
+        }
+
+        logger.info(f"初始化导入器 - 会话ID: {session_id}")
+
+    def close(self):
+        """关闭连接"""
+        self.driver.close()
+
+    def load_json_data(self, data_type: str):
+        """加载JSON数据"""
+        filename = f"{self.session_id}_{data_type}.json"
+        filepath = os.path.join(self.output_dir, filename)
+
+        if not os.path.exists(filepath):
+            logger.warning(f"文件不存在: {filepath}")
+            return []
+
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                logger.info(f"✓ 加载 {data_type}: {len(data)} 条记录")
+                return data
+        except Exception as e:
+            logger.error(f"加载 {data_type} 失败: {e}")
+            return []
+
+    def import_green_classifications(self):
+        """导入绿色技术分类"""
+        logger.info("\n" + "=" * 60)
+        logger.info("导入绿色技术分类")
+        logger.info("=" * 60)
+
+        data = self.load_json_data('green_classifications')
+        if not data:
+            logger.info("没有绿色技术分类数据需要导入")
+            return
+
+        with self.driver.session() as session:
+            batch_size = 1000
+            for i in range(0, len(data), batch_size):
+                batch = data[i:i + batch_size]
+
+                try:
+                    query = """
+                    UNWIND $batch AS item
+                    MATCH (p:Patent {patentId: item.patent_id})
+                    MATCH (g:GreenTechCategory {code: item.category_code})
+                    MERGE (p)-[r:CATEGORIZED_AS_GREEN]->(g)
+                    SET r.confidence = item.confidence,
+                        r.reasoning = item.reasoning,
+                        r.discovered_by = 'LLM',
+                        r.discovered_at = datetime()
+                    """
+                    result = session.run(query, batch=batch)
+                    result.consume()
+
+                    self.import_stats['green_classifications'] += len(batch)
+                    logger.info(f"已导入: {self.import_stats['green_classifications']}/{len(data)}")
+
+                except Exception as e:
+                    logger.error(f"导入绿色分类批次失败: {e}")
+                    self.import_stats['errors'].append(f"绿色分类批次{i}-{i + batch_size}失败: {e}")
+
+        logger.info(f"✓ 绿色技术分类导入完成: {self.import_stats['green_classifications']} 条")
+
+    def import_tech_classifications(self):
+        """导入技术领域分类"""
+        logger.info("\n" + "=" * 60)
+        logger.info("导入技术领域分类")
+        logger.info("=" * 60)
+
+        data = self.load_json_data('tech_classifications')
+        if not data:
+            logger.info("没有技术领域分类数据需要导入")
+            return
+
+        # 展开数据：每个patent可能有多个tech_domains
+        expanded = []
+        for item in data:
+            patent_id = item.get('patent_id')
+            for domain in item.get('tech_domains', []):
+                expanded.append({
+                    'patent_id': patent_id,
+                    'tech_code': domain.get('code'),
+                    'level': domain.get('level'),
+                    'confidence': domain.get('confidence', 0.8),
+                    'reasoning': domain.get('reasoning', '')
+                })
+
+        if not expanded:
+            logger.info("没有技术领域分类数据需要导入")
+            return
+
+        logger.info(f"展开后共 {len(expanded)} 条技术领域关系")
+
+        with self.driver.session() as session:
+            batch_size = 1000
+            for i in range(0, len(expanded), batch_size):
+                batch = expanded[i:i + batch_size]
+
+                try:
+                    query = """
+                    UNWIND $batch AS item
+                    MATCH (p:Patent {patentId: item.patent_id})
+                    MATCH (t:TechDomain {code: item.tech_code})
+                    MERGE (p)-[r:BELONGS_TO_TECH]->(t)
+                    SET r.level = item.level,
+                        r.confidence = item.confidence,
+                        r.reasoning = item.reasoning,
+                        r.discovered_by = 'LLM',
+                        r.discovered_at = datetime(),
+                        r.source = 'LLM-refined'
+                    """
+                    result = session.run(query, batch=batch)
+                    result.consume()
+
+                    self.import_stats['tech_classifications'] += len(batch)
+                    logger.info(f"已导入: {self.import_stats['tech_classifications']}/{len(expanded)}")
+
+                except Exception as e:
+                    logger.error(f"导入技术领域批次失败: {e}")
+                    self.import_stats['errors'].append(f"技术领域批次{i}-{i + batch_size}失败: {e}")
+
+        logger.info(f"✓ 技术领域分类导入完成: {self.import_stats['tech_classifications']} 条")
+
+    def import_entity_locations(self):
+        """导入实体地理位置数据"""
+        logger.info("\n" + "=" * 60)
+        logger.info("导入实体地理位置数据")
+        logger.info("=" * 60)
+
+        data = self.load_json_data('entity_locations')
+        if not data:
+            logger.info("没有实体地理位置数据需要导入")
+            return
+
+        # 过滤掉confidence=0的数据
+        valid_data = [item for item in data if item.get('confidence', 0) > 0 and item.get('province')]
+
+        if not valid_data:
+            logger.info("没有有效的地理位置数据需要导入")
+            return
+
+        logger.info(f"有效地理位置数据: {len(valid_data)} 条")
+
+        with self.driver.session() as session:
+            # 创建省份节点和关系
+            logger.info("创建省份节点和关系...")
+            batch_size = 1000
+            for i in range(0, len(valid_data), batch_size):
+                batch = valid_data[i:i + batch_size]
+
+                try:
+                    query = """
+                    UNWIND $batch AS item
+                    MATCH (e:Entity {normalizedName: item.normalized_name})
+                    MERGE (p:Province {name: item.province})
+                    MERGE (e)-[r:LOCATED_IN_PROVINCE]->(p)
+                    SET r.confidence = item.confidence,
+                        r.source = item.source,
+                        r.discovered_by = 'LLM',
+                        r.discovered_at = datetime()
+                    """
+                    result = session.run(query, batch=batch)
+                    result.consume()
+
+                    logger.info(f"省份关系: {i + len(batch)}/{len(valid_data)}")
+
+                except Exception as e:
+                    logger.error(f"导入省份批次失败: {e}")
+
+            # 创建城市节点和关系
+            city_data = [item for item in valid_data if item.get('city')]
+            if city_data:
+                logger.info("创建城市节点和关系...")
+                for i in range(0, len(city_data), batch_size):
+                    batch = city_data[i:i + batch_size]
+
+                    try:
+                        query = """
+                        UNWIND $batch AS item
+                        MATCH (e:Entity {normalizedName: item.normalized_name})
+                        MERGE (c:City {fullName: item.province + '-' + item.city})
+                        ON CREATE SET c.name = item.city, c.province = item.province
+                        MERGE (e)-[r:LOCATED_IN_CITY]->(c)
+                        SET r.confidence = item.confidence,
+                            r.source = item.source,
+                            r.discovered_by = 'LLM',
+                            r.discovered_at = datetime()
+                        """
+                        result = session.run(query, batch=batch)
+                        result.consume()
+
+                        logger.info(f"城市关系: {i + len(batch)}/{len(city_data)}")
+
+                    except Exception as e:
+                        logger.error(f"导入城市批次失败: {e}")
+
+            # 创建区县节点和关系
+            district_data = [item for item in valid_data if item.get('district')]
+            if district_data:
+                logger.info("创建区县节点和关系...")
+                for i in range(0, len(district_data), batch_size):
+                    batch = district_data[i:i + batch_size]
+
+                    try:
+                        query = """
+                        UNWIND $batch AS item
+                        MATCH (e:Entity {normalizedName: item.normalized_name})
+                        MERGE (d:District {fullName: item.province + '-' + item.city + '-' + item.district})
+                        ON CREATE SET d.name = item.district,
+                                     d.city = item.city,
+                                     d.province = item.province
+                        MERGE (e)-[r:LOCATED_IN_DISTRICT]->(d)
+                        SET r.confidence = item.confidence,
+                            r.source = item.source,
+                            r.discovered_by = 'LLM',
+                            r.discovered_at = datetime()
+                        """
+                        result = session.run(query, batch=batch)
+                        result.consume()
+
+                        logger.info(f"区县关系: {i + len(batch)}/{len(district_data)}")
+
+                    except Exception as e:
+                        logger.error(f"导入区县批次失败: {e}")
+
+            self.import_stats['entity_locations'] = len(valid_data)
+
+        logger.info(f"✓ 实体地理位置数据导入完成: {len(valid_data)} 条")
+
+    def verify_import(self):
+        """验证导入结果"""
+        logger.info("\n" + "=" * 60)
+        logger.info("验证导入结果")
+        logger.info("=" * 60)
+
+        with self.driver.session() as session:
+            queries = {
+                "绿色技术分类关系": "MATCH ()-[r:CATEGORIZED_AS_GREEN]->() WHERE r.discovered_by = 'LLM' RETURN count(r) as count",
+                "技术领域关系(LLM)": "MATCH ()-[r:BELONGS_TO_TECH]->() WHERE r.discovered_by = 'LLM' RETURN count(r) as count",
+                "省份关系(LLM)": "MATCH ()-[r:LOCATED_IN_PROVINCE]->() WHERE r.discovered_by = 'LLM' RETURN count(r) as count",
+                "城市关系(LLM)": "MATCH ()-[r:LOCATED_IN_CITY]->() WHERE r.discovered_by = 'LLM' RETURN count(r) as count",
+                "区县关系(LLM)": "MATCH ()-[r:LOCATED_IN_DISTRICT]->() WHERE r.discovered_by = 'LLM' RETURN count(r) as count",
+                "技术领域节点": "MATCH (t:TechDomain) RETURN count(t) as count",
+                "绿色技术分类节点": "MATCH (g:GreenTechCategory) RETURN count(g) as count",
+                "省份节点": "MATCH (p:Province) RETURN count(p) as count",
+                "城市节点": "MATCH (c:City) RETURN count(c) as count",
+                "区县节点": "MATCH (d:District) RETURN count(d) as count"
+            }
+
+            for name, query in queries.items():
+                try:
+                    result = session.run(query)
+                    count = result.single()['count']
+                    logger.info(f"  {name}: {count} 条/个")
+                except Exception as e:
+                    logger.error(f"验证 {name} 失败: {e}")
+
+    def import_all(self):
+        """导入所有数据"""
+        logger.info("=" * 60)
+        logger.info("开始从JSON导入到Neo4j")
+        logger.info(f"会话ID: {self.session_id}")
+        logger.info("=" * 60)
+
+        start_time = datetime.now()
+
+        # 依次导入各类数据
+        self.import_green_classifications()
+        self.import_tech_classifications()
+        self.import_entity_locations()
+
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+        # 验证导入
+        self.verify_import()
+
+        # 打印总结
+        logger.info("\n" + "=" * 60)
+        logger.info("导入完成总结")
+        logger.info("=" * 60)
+        logger.info(f"会话ID: {self.session_id}")
+        logger.info(f"耗时: {duration:.2f} 秒")
+        logger.info(f"\n导入统计:")
+        logger.info(f"  - 绿色技术分类: {self.import_stats['green_classifications']} 条")
+        logger.info(f"  - 技术领域分类: {self.import_stats['tech_classifications']} 条")
+        logger.info(f"  - 实体地理位置: {self.import_stats['entity_locations']} 条")
+
+        if self.import_stats['errors']:
+            logger.warning(f"\n错误数量: {len(self.import_stats['errors'])}")
+            for error in self.import_stats['errors'][:10]:  # 只显示前10个错误
+                logger.warning(f"  - {error}")
+        else:
+            logger.info("\n✓ 没有错误!")
+
+        logger.info("=" * 60)
+
+
+def list_available_sessions(output_dir: str = None):
+    """列出所有可用的会话"""
+    output_dir = output_dir or LLM_ENHANCE_CONFIG['output_dir']
+
+    if not os.path.exists(output_dir):
+        logger.info(f"输出目录不存在: {output_dir}")
+        return []
+
+    # 查找所有progress.json文件
+    sessions = []
+    for filename in os.listdir(output_dir):
+        if filename.endswith('_progress.json'):
+            session_id = filename.replace('_progress.json', '')
+
+            # 读取进度信息
+            filepath = os.path.join(output_dir, filename)
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    progress = json.load(f)
+                    sessions.append({
+                        'session_id': session_id,
+                        'processed_patents': len(progress.get('processed_patents', [])),
+                        'processed_entities': len(progress.get('processed_entities', [])),
+                        'last_update': progress.get('last_update', 'Unknown')
+                    })
+            except:
+                pass
+
+    return sorted(sessions, key=lambda x: x['session_id'], reverse=True)
+
+
+def main():
+    """主函数"""
+    import sys
+
+    session_id = None
+    list_sessions = False
+
+    if len(sys.argv) > 1:
+        if sys.argv[1] == '--session':
+            session_id = sys.argv[2] if len(sys.argv) > 2 else None
+        elif sys.argv[1] == '--list':
+            list_sessions = True
+
+    if list_sessions:
+        logger.info("可用的会话:")
+        sessions = list_available_sessions()
+        if not sessions:
+            logger.info("  (没有找到会话)")
+        else:
+            for sess in sessions:
+                logger.info(f"  - {sess['session_id']}")
+                logger.info(f"    已处理专利: {sess['processed_patents']}")
+                logger.info(f"    已处理实体: {sess['processed_entities']}")
+                logger.info(f"    最后更新: {sess['last_update']}")
+        return
+
+    if not session_id:
+        # 尝试使用最新的会话
+        sessions = list_available_sessions()
+        if sessions:
+            session_id = sessions[0]['session_id']
+            logger.info(f"使用最新会话: {session_id}")
+        else:
+            logger.error("错误: 请指定会话ID")
+            logger.info("用法: python llm_import_to_neo4j.py --session {session_id}")
+            logger.info("或者: python llm_import_to_neo4j.py --list  # 列出所有会话")
+            return
+
+    importer = Neo4jImporter(session_id)
+
+    try:
+        importer.import_all()
+        logger.info("\n✓ 所有数据已成功导入Neo4j!")
+
+    except Exception as e:
+        logger.error(f"导入失败: {e}", exc_info=True)
+        raise
+    finally:
+        importer.close()
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+tech_domains.py:
+# -*- coding: utf-8 -*-
+"""
+技术领域树定义（完整版）
+三级层次结构: L1(产业链) -> L2(技术路径) -> L3(细分技术)
+包含所有"其他"分类节点
+"""
+
+TECH_TREE = {
+    "H1": {
+        "nameZh": "制氢(上游)",
+        "nameEn": "Hydrogen Production",
+        "level": 1,
+        "children": {
+            "H1.1": {
+                "nameZh": "电解水制氢",
+                "nameEn": "Water Electrolysis",
+                "level": 2,
+                "children": {
+                    "H1.1.1": {"nameZh": "碱性电解(AEL)", "nameEn": "Alkaline Electrolysis (AEL)", "level": 3},
+                    "H1.1.2": {"nameZh": "质子交换膜电解(PEMEL)",
+                               "nameEn": "Proton Exchange Membrane Electrolysis (PEMEL)", "level": 3},
+                    "H1.1.3": {"nameZh": "固体氧化物电解(SOEC)", "nameEn": "Solid Oxide Electrolysis Cell (SOEC)",
+                               "level": 3},
+                    "H1.1.4": {"nameZh": "阴离子交换膜电解(AEMEL)",
+                               "nameEn": "Anion Exchange Membrane Electrolysis (AEMEL)", "level": 3},
+                    "H1.1.5": {"nameZh": "其他电解水制氢技术", "nameEn": "Other Water Electrolysis", "level": 3}
+                }
+            },
+            "H1.2": {
+                "nameZh": "化石能源制氢",
+                "nameEn": "Fossil-based Reforming",
+                "level": 2,
+                "children": {
+                    "H1.2.1": {"nameZh": "天然气重整(SMR)", "nameEn": "Steam Methane Reforming (SMR)", "level": 3},
+                    "H1.2.2": {"nameZh": "煤制氢(煤气化)", "nameEn": "Coal Gasification", "level": 3},
+                    "H1.2.3": {"nameZh": "甲醇裂解制氢", "nameEn": "Methanol Reforming", "level": 3},
+                    "H1.2.4": {"nameZh": "其他化石能源制氢技术", "nameEn": "Other Fossil-based Reforming", "level": 3}
+                }
+            },
+            "H1.3": {
+                "nameZh": "可再生能源耦合制氢",
+                "nameEn": "Renewable-integrated Production",
+                "level": 2,
+                "children": {
+                    "H1.3.1": {"nameZh": "风光电制氢系统集成", "nameEn": "Wind-Solar-H2 System Integration",
+                               "level": 3},
+                    "H1.3.2": {"nameZh": "离网/微网制氢", "nameEn": "Off-grid/Microgrid H2 Production", "level": 3},
+                    "H1.3.3": {"nameZh": "电解槽与可再生能源协同控制",
+                               "nameEn": "Electrolyzer-Renewable Energy Co-control", "level": 3},
+                    "H1.3.4": {"nameZh": "其他可再生能源耦合制氢技术",
+                               "nameEn": "Other Renewable-integrated Production", "level": 3}
+                }
+            },
+            "H1.4": {
+                "nameZh": "光/热/生物制氢",
+                "nameEn": "Alternative (Photo/Thermo/Bio) Methods",
+                "level": 2,
+                "children": {
+                    "H1.4.1": {"nameZh": "光催化/光电化学制氢", "nameEn": "Photo-catalytic/Photoelectrochemical H2",
+                               "level": 3},
+                    "H1.4.2": {"nameZh": "太阳能热化学循环制氢", "nameEn": "Solar Thermochemical Cycles", "level": 3},
+                    "H1.4.3": {"nameZh": "生物质气化/发酵制氢", "nameEn": "Biomass Gasification/Fermentation",
+                               "level": 3},
+                    "H1.4.4": {"nameZh": "其他光/热/生物制氢技术", "nameEn": "Other Alternative Methods", "level": 3}
+                }
+            },
+            "H1.5": {
+                "nameZh": "其他制氢技术",
+                "nameEn": "Other Hydrogen Production",
+                "level": 2,
+                "children": {}
+            }
+        }
+    },
+    "H2": {
+        "nameZh": "储运氢(中游)",
+        "nameEn": "Hydrogen Storage & Transportation",
+        "level": 1,
+        "children": {
+            "H2.1": {
+                "nameZh": "高压气态储运",
+                "nameEn": "High-pressure Gaseous",
+                "level": 2,
+                "children": {
+                    "H2.1.1": {"nameZh": "35 MPa 储氢容器", "nameEn": "35 MPa H2 Containers", "level": 3},
+                    "H2.1.2": {"nameZh": "70 MPa 储氢容器", "nameEn": "70 MPa H2 Containers", "level": 3},
+                    "H2.1.3": {"nameZh": "高压管束车/长管拖车", "nameEn": "High-pressure Tube Trailers", "level": 3},
+                    "H2.1.4": {"nameZh": "其他高压气态储运技术", "nameEn": "Other High-pressure Gaseous", "level": 3}
+                }
+            },
+            "H2.2": {
+                "nameZh": "低温液态储运",
+                "nameEn": "Cryogenic Liquid",
+                "level": 2,
+                "children": {
+                    "H2.2.1": {"nameZh": "液氢储罐(车载/固定)", "nameEn": "Liquid H2 Tanks (Mobile/Stationary)",
+                               "level": 3},
+                    "H2.2.2": {"nameZh": "液氢加注与转注技术", "nameEn": "Liquid H2 Transfer Technology", "level": 3},
+                    "H2.2.3": {"nameZh": "液氢蒸发损失控制", "nameEn": "Liquid H2 Boil-off Control", "level": 3},
+                    "H2.2.4": {"nameZh": "其他低温液态储运技术", "nameEn": "Other Cryogenic Liquid", "level": 3}
+                }
+            },
+            "H2.3": {
+                "nameZh": "固态/材料储氢",
+                "nameEn": "Solid-state / Material-based",
+                "level": 2,
+                "children": {
+                    "H2.3.1": {"nameZh": "金属/合金氢化物", "nameEn": "Metal/Alloy Hydrides", "level": 3},
+                    "H2.3.2": {"nameZh": "化学氢化物(NaBH₄, NH₃BH₃ 等)", "nameEn": "Chemical Hydrides", "level": 3},
+                    "H2.3.3": {"nameZh": "多孔材料吸附储氢(MOFs, 碳材料)", "nameEn": "Porous Materials (MOFs, Carbon)",
+                               "level": 3},
+                    "H2.3.4": {"nameZh": "其他固态/材料储氢技术", "nameEn": "Other Solid-state Storage", "level": 3}
+                }
+            },
+            "H2.4": {
+                "nameZh": "有机载体储运(LOHC等)",
+                "nameEn": "Liquid Organic Carriers",
+                "level": 2,
+                "children": {
+                    "H2.4.1": {"nameZh": "甲苯/甲基环己烷体系", "nameEn": "Toluene/Methylcyclohexane System",
+                               "level": 3},
+                    "H2.4.2": {"nameZh": "N-乙基咔唑等杂环体系", "nameEn": "N-Ethylcarbazole Systems", "level": 3},
+                    "H2.4.3": {"nameZh": "载体加氢/脱氢催化剂", "nameEn": "Hydrogenation/Dehydrogenation Catalysts",
+                               "level": 3},
+                    "H2.4.4": {"nameZh": "其他有机载体储运技术", "nameEn": "Other Liquid Organic Carriers", "level": 3}
+                }
+            },
+            "H2.5": {
+                "nameZh": "氢输配基础设施",
+                "nameEn": "Distribution Infrastructure",
+                "level": 2,
+                "children": {
+                    "H2.5.1": {"nameZh": "氢气管道(纯氢/掺氢)", "nameEn": "H2 Pipelines (Pure/Blended)", "level": 3},
+                    "H2.5.2": {"nameZh": "加氢站关键设备", "nameEn": "H2 Refueling Station Equipment", "level": 3},
+                    "H2.5.3": {"nameZh": "氢气压缩与纯化", "nameEn": "H2 Compression & Purification", "level": 3},
+                    "H2.5.4": {"nameZh": "其他氢输配基础设施技术", "nameEn": "Other Distribution Infrastructure",
+                               "level": 3}
+                }
+            },
+            "H2.6": {
+                "nameZh": "其他储运氢技术",
+                "nameEn": "Other Storage & Transportation",
+                "level": 2,
+                "children": {}
+            }
+        }
+    },
+    "H3": {
+        "nameZh": "用氢(下游)",
+        "nameEn": "Hydrogen Utilization",
+        "level": 1,
+        "children": {
+            "H3.1": {
+                "nameZh": "燃料电池",
+                "nameEn": "Fuel Cells",
+                "level": 2,
+                "children": {
+                    "H3.1.1": {"nameZh": "质子交换膜燃料电池(PEMFC)",
+                               "nameEn": "Proton Exchange Membrane Fuel Cell (PEMFC)", "level": 3},
+                    "H3.1.2": {"nameZh": "固体氧化物燃料电池(SOFC)", "nameEn": "Solid Oxide Fuel Cell (SOFC)",
+                               "level": 3},
+                    "H3.1.3": {"nameZh": "碱性燃料电池(AFC)等其他类型", "nameEn": "Alkaline Fuel Cell (AFC) & Others",
+                               "level": 3},
+                    "H3.1.4": {"nameZh": "其他燃料电池技术", "nameEn": "Other Fuel Cells", "level": 3}
+                }
+            },
+            "H3.2": {
+                "nameZh": "氢能交通",
+                "nameEn": "Hydrogen Mobility",
+                "level": 2,
+                "children": {
+                    "H3.2.1": {"nameZh": "氢燃料电池汽车", "nameEn": "Fuel Cell Electric Vehicles", "level": 3},
+                    "H3.2.2": {"nameZh": "氢动力轨道交通/船舶/航空", "nameEn": "H2 Rail/Marine/Aviation", "level": 3},
+                    "H3.2.3": {"nameZh": "车载供氢系统", "nameEn": "On-board H2 Supply Systems", "level": 3},
+                    "H3.2.4": {"nameZh": "其他氢能交通技术", "nameEn": "Other Hydrogen Mobility", "level": 3}
+                }
+            },
+            "H3.3": {
+                "nameZh": "工业用氢",
+                "nameEn": "Industrial Applications",
+                "level": 2,
+                "children": {
+                    "H3.3.1": {"nameZh": "氢冶金(直接还原铁等)", "nameEn": "H2 Metallurgy (DRI, etc.)", "level": 3},
+                    "H3.3.2": {"nameZh": "石化/合成氨/甲醇用氢", "nameEn": "Petrochemical/Ammonia/Methanol",
+                               "level": 3},
+                    "H3.3.3": {"nameZh": "电子级高纯氢应用", "nameEn": "Electronics-grade H2", "level": 3},
+                    "H3.3.4": {"nameZh": "其他工业用氢技术", "nameEn": "Other Industrial Applications", "level": 3}
+                }
+            },
+            "H3.4": {
+                "nameZh": "氢能发电与储能",
+                "nameEn": "Power Generation & Grid Storage",
+                "level": 2,
+                "children": {
+                    "H3.4.1": {"nameZh": "氢燃气轮机发电", "nameEn": "H2 Gas Turbine Power", "level": 3},
+                    "H3.4.2": {"nameZh": "氢-电双向储能系统", "nameEn": "H2-Electricity Bidirectional Storage",
+                               "level": 3},
+                    "H3.4.3": {"nameZh": "氢参与电网调峰", "nameEn": "H2 Grid Balancing", "level": 3},
+                    "H3.4.4": {"nameZh": "其他氢能发电与储能技术", "nameEn": "Other Power Generation & Storage",
+                               "level": 3}
+                }
+            },
+            "H3.5": {
+                "nameZh": "氢基燃料合成",
+                "nameEn": "Hydrogen-derived Fuels",
+                "level": 2,
+                "children": {
+                    "H3.5.1": {"nameZh": "绿氨合成", "nameEn": "Green Ammonia Synthesis", "level": 3},
+                    "H3.5.2": {"nameZh": "电子甲醇/e-Fuels", "nameEn": "e-Methanol/e-Fuels", "level": 3},
+                    "H3.5.3": {"nameZh": "合成航空煤油(e-Kerosene)", "nameEn": "e-Kerosene", "level": 3},
+                    "H3.5.4": {"nameZh": "其他氢基燃料合成技术", "nameEn": "Other Hydrogen-derived Fuels", "level": 3}
+                }
+            },
+            "H3.6": {
+                "nameZh": "其他用氢技术",
+                "nameEn": "Other Hydrogen Utilization",
+                "level": 2,
+                "children": {}
+            }
+        }
+    },
+    "H4": {
+        "nameZh": "其他(不在制、储运、用之中)",
+        "nameEn": "Other (Not in Production/Storage/Utilization)",
+        "level": 1,
+        "children": {}
+    }
+}
+
+
+def get_all_tech_domains():
+    """
+    展开技术领域树，返回所有节点的列表
+    每个节点包含: code, nameZh, nameEn, level, parent_code
+    """
+    domains = []
+
+    def traverse(node_dict, parent_code=None):
+        for code, data in node_dict.items():
+            domain = {
+                "code": code,
+                "nameZh": data["nameZh"],
+                "nameEn": data["nameEn"],
+                "level": data["level"],
+                "parent_code": parent_code
+            }
+            domains.append(domain)
+
+            if "children" in data and data["children"]:
+                traverse(data["children"], parent_code=code)
+
+    traverse(TECH_TREE)
+    return domains
+
+
+def get_tech_tree_text():
+    """
+    生成技术树的文本描述（用于LLM提示）
+    """
+    text_lines = []
+
+    text_lines.append("## 氢能技术领域分类体系")
+    text_lines.append("")
+
+    for l1_code, l1_data in TECH_TREE.items():
+        text_lines.append(f"### {l1_code} {l1_data['nameZh']} ({l1_data['nameEn']})")
+
+        if not l1_data.get('children'):
+            text_lines.append("")
+            continue
+
+        for l2_code, l2_data in l1_data['children'].items():
+            text_lines.append(f"  **{l2_code}** {l2_data['nameZh']} ({l2_data['nameEn']})")
+
+            if l2_data.get('children'):
+                for l3_code, l3_data in l2_data['children'].items():
+                    text_lines.append(f"    - {l3_code}: {l3_data['nameZh']}")
+
+            text_lines.append("")
+
+    return "\n".join(text_lines)
+
+
+if __name__ == "__main__":
+    # 测试
+    domains = get_all_tech_domains()
+    print(f"共有 {len(domains)} 个技术领域节点")
+    for d in domains[:20]:
+        print(d)
+
+    print("\n" + "=" * 60)
+    print(get_tech_tree_text()[:500])
+
+
+
+
+
+
+
+
+
+

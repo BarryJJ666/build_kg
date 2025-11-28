@@ -1,0 +1,289 @@
+2025-11-27 17:07:42,866 - INFO - Connected to Neo4j at bolt://8.130.70.72:21099
+2025-11-27 17:07:42,866 - WARNING - Clearing database...
+2025-11-27 17:07:46,157 - INFO - Database cleared successfully
+2025-11-27 17:08:06,329 - INFO - ============================================================
+2025-11-27 17:08:06,330 - INFO - Starting Knowledge Graph Construction
+2025-11-27 17:08:06,330 - INFO - ============================================================
+2025-11-27 17:08:06,330 - INFO - Creating constraints...
+2025-11-27 17:08:06,346 - INFO - ✓ patent_id
+2025-11-27 17:08:06,362 - INFO - ✓ entity_normalized_name
+2025-11-27 17:08:06,378 - INFO - ✓ techDomain_code
+2025-11-27 17:08:06,395 - INFO - ✓ date_value
+2025-11-27 17:08:06,412 - INFO - ✓ province_name
+2025-11-27 17:08:06,441 - INFO - ✓ city_fullname
+2025-11-27 17:08:06,461 - INFO - ✓ district_fullname
+2025-11-27 17:08:06,478 - INFO - ✓ green_category_code
+2025-11-27 17:08:06,479 - INFO - Creating technology domain tree...
+2025-11-27 17:08:06,555 - INFO - ✓ Created 78 technology domains
+2025-11-27 17:08:06,557 - INFO - Creating green technology categories...
+2025-11-27 17:08:06,596 - INFO - ✓ Created 5 green technology categories
+2025-11-27 17:08:06,598 - INFO - Starting data import...
+2025-11-27 17:08:06,598 - INFO - Processing: 2.6.1制氢技术-1.xlsx
+2025-11-27 17:08:16,484 - INFO - ✓ Processed 2.6.1制氢技术-1.xlsx: 25768/25768 valid patents, 0 skipped
+2025-11-27 17:08:16,502 - INFO - Processing: 2.6.1制氢技术-2.xlsx
+2025-11-27 17:08:24,452 - INFO - ✓ Processed 2.6.1制氢技术-2.xlsx: 22162/22162 valid patents, 0 skipped
+2025-11-27 17:08:24,458 - INFO - Processing: 2.6.2.1 物理储氢.xlsx
+2025-11-27 17:08:29,176 - INFO - ✓ Processed 2.6.2.1 物理储氢.xlsx: 12119/12119 valid patents, 0 skipped
+2025-11-27 17:08:29,188 - INFO - Processing: 2.6.2.2合金储氢.xlsx
+2025-11-27 17:08:29,963 - INFO - ✓ Processed 2.6.2.2合金储氢.xlsx: 1649/1649 valid patents, 0 skipped
+2025-11-27 17:08:29,964 - INFO - Processing: 2.6.2.3无机储氢-1.xlsx
+2025-11-27 17:08:30,002 - INFO - ✓ Processed 2.6.2.3无机储氢-1.xlsx: 52/52 valid patents, 0 skipped
+2025-11-27 17:08:30,003 - INFO - Processing: 2.6.2.3无机储氢-2.xlsx
+2025-11-27 17:08:30,223 - INFO - ✓ Processed 2.6.2.3无机储氢-2.xlsx: 511/511 valid patents, 0 skipped
+2025-11-27 17:08:30,224 - INFO - Processing: 2.6.2.4有机储氢.xlsx
+2025-11-27 17:08:30,290 - INFO - ✓ Processed 2.6.2.4有机储氢.xlsx: 121/121 valid patents, 0 skipped
+2025-11-27 17:08:30,290 - INFO - Processing: 2.6.3氢燃料电池.xlsx
+2025-11-27 17:08:45,302 - INFO - ✓ Processed 2.6.3氢燃料电池.xlsx: 42604/42604 valid patents, 0 skipped
+2025-11-27 17:08:45,317 - INFO - Processing: 2.6.4氢制冷.xlsx
+2025-11-27 17:08:46,222 - INFO - ✓ Processed 2.6.4氢制冷.xlsx: 2341/2341 valid patents, 0 skipped
+2025-11-27 17:08:46,224 - INFO - Total patents to import: 107327
+2025-11-27 17:08:46,224 - INFO - Processing batch 1/22 (5000 patents)...
+2025-11-27 17:08:46,244 - ERROR - Error: missing ), unterminated subpattern at position 4
+Traceback (most recent call last):
+  File "/home/barry/build_kg/import_patents.py", line 752, in main
+    builder.import_all_data()
+  File "/home/barry/build_kg/import_patents.py", line 715, in import_all_data
+    self.batch_create_all_nodes_and_relationships(batch)
+  File "/home/barry/build_kg/import_patents.py", line 378, in batch_create_all_nodes_and_relationships
+    location = self.extract_location_from_entity(applicant)
+  File "/home/barry/build_kg/import_patents.py", line 195, in extract_location_from_entity
+    district_match = re.search(district_pattern, entity_name)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/re.py", line 200, in search
+    return _compile(pattern, flags).search(string)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/re.py", line 303, in _compile
+    p = sre_compile.compile(pattern, flags)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/sre_compile.py", line 788, in compile
+    p = sre_parse.parse(p, flags)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/sre_parse.py", line 955, in parse
+    p = _parse_sub(source, state, flags & SRE_FLAG_VERBOSE, 0)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/sre_parse.py", line 444, in _parse_sub
+    itemsappend(_parse(source, state, verbose, nested + 1,
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/sre_parse.py", line 843, in _parse
+    raise source.error("missing ), unterminated subpattern",
+re.error: missing ), unterminated subpattern at position 4
+2025-11-27 17:08:46,256 - INFO - Neo4j connection closed
+2025-11-27 17:11:18,690 - INFO - Connected to Neo4j at bolt://8.130.70.72:21099
+2025-11-27 17:11:18,691 - WARNING - Clearing database...
+2025-11-27 17:11:18,763 - INFO - Database cleared successfully
+2025-11-27 17:11:18,766 - INFO - ============================================================
+2025-11-27 17:11:18,766 - INFO - Starting Knowledge Graph Construction
+2025-11-27 17:11:18,766 - INFO - ============================================================
+2025-11-27 17:11:18,766 - INFO - Creating constraints...
+2025-11-27 17:11:18,780 - INFO - ✓ patent_id
+2025-11-27 17:11:18,795 - INFO - ✓ entity_normalized_name
+2025-11-27 17:11:18,810 - INFO - ✓ techDomain_code
+2025-11-27 17:11:18,825 - INFO - ✓ date_value
+2025-11-27 17:11:18,839 - INFO - ✓ province_name
+2025-11-27 17:11:18,854 - INFO - ✓ city_fullname
+2025-11-27 17:11:18,871 - INFO - ✓ district_fullname
+2025-11-27 17:11:18,885 - INFO - ✓ green_category_code
+2025-11-27 17:11:18,886 - INFO - Creating technology domain tree...
+2025-11-27 17:11:18,957 - INFO - ✓ Created 78 technology domains
+2025-11-27 17:11:18,960 - INFO - Creating green technology categories...
+2025-11-27 17:11:18,974 - INFO - ✓ Created 5 green technology categories
+2025-11-27 17:11:18,974 - INFO - Starting data import...
+2025-11-27 17:11:18,975 - INFO - Processing: 2.6.1制氢技术-1.xlsx
+2025-11-27 17:11:28,126 - INFO - ✓ Processed 2.6.1制氢技术-1.xlsx: 25768/25768 valid patents, 0 skipped
+2025-11-27 17:11:28,133 - INFO - Processing: 2.6.1制氢技术-2.xlsx
+2025-11-27 17:11:35,844 - INFO - ✓ Processed 2.6.1制氢技术-2.xlsx: 22162/22162 valid patents, 0 skipped
+2025-11-27 17:11:35,850 - INFO - Processing: 2.6.2.1 物理储氢.xlsx
+2025-11-27 17:11:40,375 - INFO - ✓ Processed 2.6.2.1 物理储氢.xlsx: 12119/12119 valid patents, 0 skipped
+2025-11-27 17:11:40,378 - INFO - Processing: 2.6.2.2合金储氢.xlsx
+2025-11-27 17:11:41,095 - INFO - ✓ Processed 2.6.2.2合金储氢.xlsx: 1649/1649 valid patents, 0 skipped
+2025-11-27 17:11:41,096 - INFO - Processing: 2.6.2.3无机储氢-1.xlsx
+2025-11-27 17:11:41,133 - INFO - ✓ Processed 2.6.2.3无机储氢-1.xlsx: 52/52 valid patents, 0 skipped
+2025-11-27 17:11:41,133 - INFO - Processing: 2.6.2.3无机储氢-2.xlsx
+2025-11-27 17:11:41,341 - INFO - ✓ Processed 2.6.2.3无机储氢-2.xlsx: 511/511 valid patents, 0 skipped
+2025-11-27 17:11:41,341 - INFO - Processing: 2.6.2.4有机储氢.xlsx
+2025-11-27 17:11:41,405 - INFO - ✓ Processed 2.6.2.4有机储氢.xlsx: 121/121 valid patents, 0 skipped
+2025-11-27 17:11:41,405 - INFO - Processing: 2.6.3氢燃料电池.xlsx
+2025-11-27 17:11:55,814 - INFO - ✓ Processed 2.6.3氢燃料电池.xlsx: 42604/42604 valid patents, 0 skipped
+2025-11-27 17:11:55,827 - INFO - Processing: 2.6.4氢制冷.xlsx
+2025-11-27 17:11:56,684 - INFO - ✓ Processed 2.6.4氢制冷.xlsx: 2341/2341 valid patents, 0 skipped
+2025-11-27 17:11:56,686 - INFO - Total patents to import: 107327
+2025-11-27 17:11:56,686 - INFO - Processing batch 1/22 (5000 patents)...
+2025-11-27 17:11:56,706 - ERROR - Error: missing ), unterminated subpattern at position 4
+Traceback (most recent call last):
+  File "/home/barry/build_kg/import_patents.py", line 752, in main
+    builder.import_all_data()
+  File "/home/barry/build_kg/import_patents.py", line 715, in import_all_data
+    self.batch_create_all_nodes_and_relationships(batch)
+  File "/home/barry/build_kg/import_patents.py", line 378, in batch_create_all_nodes_and_relationships
+    location = self.extract_location_from_entity(applicant)
+  File "/home/barry/build_kg/import_patents.py", line 195, in extract_location_from_entity
+    district_match = re.search(district_pattern, entity_name)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/re.py", line 200, in search
+    return _compile(pattern, flags).search(string)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/re.py", line 303, in _compile
+    p = sre_compile.compile(pattern, flags)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/sre_compile.py", line 788, in compile
+    p = sre_parse.parse(p, flags)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/sre_parse.py", line 955, in parse
+    p = _parse_sub(source, state, flags & SRE_FLAG_VERBOSE, 0)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/sre_parse.py", line 444, in _parse_sub
+    itemsappend(_parse(source, state, verbose, nested + 1,
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/sre_parse.py", line 843, in _parse
+    raise source.error("missing ), unterminated subpattern",
+re.error: missing ), unterminated subpattern at position 4
+2025-11-27 17:11:56,707 - INFO - Neo4j connection closed
+2025-11-27 17:16:05,030 - INFO - Connected to Neo4j at bolt://8.130.70.72:21099
+2025-11-27 17:16:05,030 - INFO - ============================================================
+2025-11-27 17:16:05,030 - INFO - Starting Knowledge Graph Construction
+2025-11-27 17:16:05,030 - INFO - ============================================================
+2025-11-27 17:16:05,030 - INFO - Creating constraints...
+2025-11-27 17:16:05,095 - INFO - ✓ patent_id
+2025-11-27 17:16:05,111 - INFO - ✓ entity_normalized_name
+2025-11-27 17:16:05,128 - INFO - ✓ techDomain_code
+2025-11-27 17:16:05,144 - INFO - ✓ date_value
+2025-11-27 17:16:05,161 - INFO - ✓ province_name
+2025-11-27 17:16:05,177 - INFO - ✓ city_fullname
+2025-11-27 17:16:05,193 - INFO - ✓ district_fullname
+2025-11-27 17:16:05,208 - INFO - ✓ green_category_code
+2025-11-27 17:16:05,209 - INFO - Creating technology domain tree...
+2025-11-27 17:16:05,278 - INFO - ✓ Created 78 technology domains
+2025-11-27 17:16:05,279 - INFO - Creating green technology categories...
+2025-11-27 17:16:05,308 - INFO - ✓ Created 5 green technology categories
+2025-11-27 17:16:05,308 - INFO - Starting data import...
+2025-11-27 17:16:05,308 - INFO - Processing: 2.6.1制氢技术-1.xlsx
+2025-11-27 17:16:08,555 - INFO - Neo4j connection closed
+2025-11-27 17:16:10,854 - INFO - Connected to Neo4j at bolt://8.130.70.72:21099
+2025-11-27 17:16:10,854 - WARNING - Clearing database...
+2025-11-27 17:16:10,921 - INFO - Database cleared successfully
+2025-11-27 17:16:10,924 - INFO - ============================================================
+2025-11-27 17:16:10,924 - INFO - Starting Knowledge Graph Construction
+2025-11-27 17:16:10,924 - INFO - ============================================================
+2025-11-27 17:16:10,924 - INFO - Creating constraints...
+2025-11-27 17:16:10,941 - INFO - ✓ patent_id
+2025-11-27 17:16:10,955 - INFO - ✓ entity_normalized_name
+2025-11-27 17:16:10,970 - INFO - ✓ techDomain_code
+2025-11-27 17:16:10,984 - INFO - ✓ date_value
+2025-11-27 17:16:10,999 - INFO - ✓ province_name
+2025-11-27 17:16:11,014 - INFO - ✓ city_fullname
+2025-11-27 17:16:11,028 - INFO - ✓ district_fullname
+2025-11-27 17:16:11,043 - INFO - ✓ green_category_code
+2025-11-27 17:16:11,044 - INFO - Creating technology domain tree...
+2025-11-27 17:16:11,081 - INFO - ✓ Created 78 technology domains
+2025-11-27 17:16:11,083 - INFO - Creating green technology categories...
+2025-11-27 17:16:11,097 - INFO - ✓ Created 5 green technology categories
+2025-11-27 17:16:11,099 - INFO - Starting data import...
+2025-11-27 17:16:11,099 - INFO - Processing: 2.6.1制氢技术-1.xlsx
+2025-11-27 17:16:20,125 - INFO - ✓ Processed 2.6.1制氢技术-1.xlsx: 25768/25768 valid patents, 0 skipped
+2025-11-27 17:16:20,131 - INFO - Processing: 2.6.1制氢技术-2.xlsx
+2025-11-27 17:16:28,122 - INFO - ✓ Processed 2.6.1制氢技术-2.xlsx: 22162/22162 valid patents, 0 skipped
+2025-11-27 17:16:28,128 - INFO - Processing: 2.6.2.1 物理储氢.xlsx
+2025-11-27 17:16:32,572 - INFO - ✓ Processed 2.6.2.1 物理储氢.xlsx: 12119/12119 valid patents, 0 skipped
+2025-11-27 17:16:32,575 - INFO - Processing: 2.6.2.2合金储氢.xlsx
+2025-11-27 17:16:33,295 - INFO - ✓ Processed 2.6.2.2合金储氢.xlsx: 1649/1649 valid patents, 0 skipped
+2025-11-27 17:16:33,296 - INFO - Processing: 2.6.2.3无机储氢-1.xlsx
+2025-11-27 17:16:33,334 - INFO - ✓ Processed 2.6.2.3无机储氢-1.xlsx: 52/52 valid patents, 0 skipped
+2025-11-27 17:16:33,334 - INFO - Processing: 2.6.2.3无机储氢-2.xlsx
+2025-11-27 17:16:33,538 - INFO - ✓ Processed 2.6.2.3无机储氢-2.xlsx: 511/511 valid patents, 0 skipped
+2025-11-27 17:16:33,539 - INFO - Processing: 2.6.2.4有机储氢.xlsx
+2025-11-27 17:16:33,603 - INFO - ✓ Processed 2.6.2.4有机储氢.xlsx: 121/121 valid patents, 0 skipped
+2025-11-27 17:16:33,603 - INFO - Processing: 2.6.3氢燃料电池.xlsx
+2025-11-27 17:16:48,174 - INFO - ✓ Processed 2.6.3氢燃料电池.xlsx: 42604/42604 valid patents, 0 skipped
+2025-11-27 17:16:48,186 - INFO - Processing: 2.6.4氢制冷.xlsx
+2025-11-27 17:16:49,072 - INFO - ✓ Processed 2.6.4氢制冷.xlsx: 2341/2341 valid patents, 0 skipped
+2025-11-27 17:16:49,074 - INFO - Total patents to import: 107327
+2025-11-27 17:16:49,074 - INFO - Processing batch 1/22 (5000 patents)...
+2025-11-27 17:16:49,094 - ERROR - Error: missing ), unterminated subpattern at position 4
+Traceback (most recent call last):
+  File "/home/barry/build_kg/import_patents.py", line 752, in main
+    builder.import_all_data()
+  File "/home/barry/build_kg/import_patents.py", line 715, in import_all_data
+    self.batch_create_all_nodes_and_relationships(batch)
+  File "/home/barry/build_kg/import_patents.py", line 378, in batch_create_all_nodes_and_relationships
+    location = self.extract_location_from_entity(applicant)
+  File "/home/barry/build_kg/import_patents.py", line 195, in extract_location_from_entity
+    district_match = re.search(district_pattern, entity_name)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/re.py", line 200, in search
+    return _compile(pattern, flags).search(string)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/re.py", line 303, in _compile
+    p = sre_compile.compile(pattern, flags)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/sre_compile.py", line 788, in compile
+    p = sre_parse.parse(p, flags)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/sre_parse.py", line 955, in parse
+    p = _parse_sub(source, state, flags & SRE_FLAG_VERBOSE, 0)
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/sre_parse.py", line 444, in _parse_sub
+    itemsappend(_parse(source, state, verbose, nested + 1,
+  File "/home/barry/anaconda3/envs/tupu/lib/python3.10/sre_parse.py", line 843, in _parse
+    raise source.error("missing ), unterminated subpattern",
+re.error: missing ), unterminated subpattern at position 4
+2025-11-27 17:16:49,095 - INFO - Neo4j connection closed
+2025-11-27 17:20:40,142 - INFO - Connected to Neo4j at bolt://8.130.70.72:21099
+2025-11-27 17:20:40,142 - WARNING - Clearing database...
+2025-11-27 17:20:40,224 - INFO - Database cleared successfully
+2025-11-27 17:20:40,227 - INFO - ============================================================
+2025-11-27 17:20:40,227 - INFO - Starting Knowledge Graph Construction
+2025-11-27 17:20:40,227 - INFO - ============================================================
+2025-11-27 17:20:40,227 - INFO - Creating constraints...
+2025-11-27 17:20:40,244 - INFO - ✓ patent_id
+2025-11-27 17:20:40,261 - INFO - ✓ entity_normalized_name
+2025-11-27 17:20:40,282 - INFO - ✓ techDomain_code
+2025-11-27 17:20:40,300 - INFO - ✓ date_value
+2025-11-27 17:20:40,317 - INFO - ✓ province_name
+2025-11-27 17:20:40,339 - INFO - ✓ city_fullname
+2025-11-27 17:20:40,355 - INFO - ✓ district_fullname
+2025-11-27 17:20:40,373 - INFO - ✓ green_category_code
+2025-11-27 17:20:40,373 - INFO - Creating technology domain tree...
+2025-11-27 17:20:40,448 - INFO - ✓ Created 78 technology domains
+2025-11-27 17:20:40,450 - INFO - Creating green technology categories...
+2025-11-27 17:20:40,483 - INFO - ✓ Created 5 green technology categories
+2025-11-27 17:20:40,485 - INFO - Starting data import...
+2025-11-27 17:20:40,485 - INFO - Processing: 2.6.1制氢技术-1.xlsx
+2025-11-27 17:20:49,734 - INFO - ✓ Processed 2.6.1制氢技术-1.xlsx: 25768/25768 valid patents, 0 skipped
+2025-11-27 17:20:49,742 - INFO - Processing: 2.6.1制氢技术-2.xlsx
+2025-11-27 17:20:57,515 - INFO - ✓ Processed 2.6.1制氢技术-2.xlsx: 22162/22162 valid patents, 0 skipped
+2025-11-27 17:20:57,520 - INFO - Processing: 2.6.2.1 物理储氢.xlsx
+2025-11-27 17:21:01,955 - INFO - ✓ Processed 2.6.2.1 物理储氢.xlsx: 12119/12119 valid patents, 0 skipped
+2025-11-27 17:21:01,958 - INFO - Processing: 2.6.2.2合金储氢.xlsx
+2025-11-27 17:21:02,675 - INFO - ✓ Processed 2.6.2.2合金储氢.xlsx: 1649/1649 valid patents, 0 skipped
+2025-11-27 17:21:02,676 - INFO - Processing: 2.6.2.3无机储氢-1.xlsx
+2025-11-27 17:21:02,715 - INFO - ✓ Processed 2.6.2.3无机储氢-1.xlsx: 52/52 valid patents, 0 skipped
+2025-11-27 17:21:02,715 - INFO - Processing: 2.6.2.3无机储氢-2.xlsx
+2025-11-27 17:21:02,917 - INFO - ✓ Processed 2.6.2.3无机储氢-2.xlsx: 511/511 valid patents, 0 skipped
+2025-11-27 17:21:02,917 - INFO - Processing: 2.6.2.4有机储氢.xlsx
+2025-11-27 17:21:02,979 - INFO - ✓ Processed 2.6.2.4有机储氢.xlsx: 121/121 valid patents, 0 skipped
+2025-11-27 17:21:02,980 - INFO - Processing: 2.6.3氢燃料电池.xlsx
+2025-11-27 17:21:17,289 - INFO - ✓ Processed 2.6.3氢燃料电池.xlsx: 42604/42604 valid patents, 0 skipped
+2025-11-27 17:21:17,300 - INFO - Processing: 2.6.4氢制冷.xlsx
+2025-11-27 17:21:18,179 - INFO - ✓ Processed 2.6.4氢制冷.xlsx: 2341/2341 valid patents, 0 skipped
+2025-11-27 17:21:18,181 - INFO - Total patents to import: 107327
+2025-11-27 17:21:18,181 - INFO - Processing batch 1/22 (5000 patents)...
+2025-11-27 17:21:23,504 - INFO - Processing batch 2/22 (5000 patents)...
+2025-11-27 17:21:28,639 - INFO - Processing batch 3/22 (5000 patents)...
+2025-11-27 17:21:34,298 - INFO - Processing batch 4/22 (5000 patents)...
+2025-11-27 17:21:39,706 - INFO - Processing batch 5/22 (5000 patents)...
+2025-11-27 17:21:45,690 - INFO - Processing batch 6/22 (5000 patents)...
+2025-11-27 17:21:51,173 - INFO - Processing batch 7/22 (5000 patents)...
+2025-11-27 17:21:56,908 - INFO - Processing batch 8/22 (5000 patents)...
+2025-11-27 17:22:02,626 - INFO - Processing batch 9/22 (5000 patents)...
+2025-11-27 17:22:09,069 - INFO - Processing batch 10/22 (5000 patents)...
+2025-11-27 17:22:15,256 - INFO - Processing batch 11/22 (5000 patents)...
+2025-11-27 17:22:20,515 - INFO - Processing batch 12/22 (5000 patents)...
+2025-11-27 17:22:25,807 - INFO - Processing batch 13/22 (5000 patents)...
+2025-11-27 17:22:31,355 - INFO - Processing batch 14/22 (5000 patents)...
+2025-11-27 17:22:36,725 - INFO - Processing batch 15/22 (5000 patents)...
+2025-11-27 17:22:42,277 - INFO - Processing batch 16/22 (5000 patents)...
+2025-11-27 17:22:47,631 - INFO - Processing batch 17/22 (5000 patents)...
+2025-11-27 17:22:52,992 - INFO - Processing batch 18/22 (5000 patents)...
+2025-11-27 17:22:58,422 - INFO - Processing batch 19/22 (5000 patents)...
+2025-11-27 17:23:04,227 - INFO - Processing batch 20/22 (5000 patents)...
+2025-11-27 17:23:10,560 - INFO - Processing batch 21/22 (5000 patents)...
+2025-11-27 17:23:16,870 - INFO - Processing batch 22/22 (2327 patents)...
+2025-11-27 17:23:20,003 - INFO - ✓ Imported 107327 patents successfully
+2025-11-27 17:23:20,099 - INFO - Import time: 159.61 seconds
+2025-11-27 17:23:20,099 - INFO - Creating indexes...
+2025-11-27 17:23:20,118 - INFO - ✓ patent_pubNumber
+2025-11-27 17:23:20,135 - INFO - ✓ patent_appNumber
+2025-11-27 17:23:20,152 - INFO - ✓ patent_titleZh
+2025-11-27 17:23:20,171 - INFO - ✓ entity_type
+2025-11-27 17:23:20,188 - INFO - ✓ entity_name
+2025-11-27 17:23:20,206 - INFO - ✓ province_name_idx
+2025-11-27 17:23:20,223 - INFO - ✓ city_name_idx
+2025-11-27 17:23:20,240 - INFO - ✓ techDomain_level
+2025-11-27 17:23:20,241 - INFO - ============================================================
+2025-11-27 17:23:20,241 - INFO - ✓ Knowledge Graph Construction Completed!
+2025-11-27 17:23:20,241 - INFO - ✓ Next step: run llm_generate_json.py for LLM-based enhancements
+2025-11-27 17:23:20,241 - INFO - ============================================================
+2025-11-27 17:23:20,241 - INFO - Neo4j connection closed
